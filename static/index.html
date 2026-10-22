@@ -88,6 +88,7 @@
       <a class="tab" href="#/history" data-tab="history">History</a>
       <a class="tab" href="#/traces" data-tab="traces">Traces</a>
       <a class="tab" href="#/labels" data-tab="labels">Labels</a>
+      <a class="tab" href="#/harness" data-tab="harness">Harness</a>
     </nav>
     <div class="ml-auto flex items-center gap-2">
       <a id="mlflowNav" href="/mlflow/" target="_blank" rel="noopener" class="btn btn-quiet hidden"
@@ -235,6 +236,7 @@
         </div>
       </div>
       <p class="hint mb-3">Select a cell for case-level detail. Time is wall clock for the cell, including queueing behind other cells and judging.</p>
+      <p id="runTimes" class="mb-3 hidden text-sm tabular-nums text-ink-muted" aria-live="off"></p>
       <div class="mb-3 flex flex-wrap items-end gap-x-4 gap-y-2 rounded-control bg-surface-2 px-3 py-2.5">
         <label class="field-label text-xs">Rank cells by (★)
           <select id="rankBy" class="score-input input mt-1 block w-auto py-1.5">
@@ -322,6 +324,17 @@
     <div id="labelScope"></div>
   </div>
   <div id="labelsBody"></div>
+</div>
+
+<!-- ─────────────────────────── Harness ─────────────────────────── -->
+<div id="view-harness" class="view mx-auto max-w-[1500px] p-4 lg:p-6" hidden>
+  <div class="mb-4">
+    <h1 class="text-xl font-semibold tracking-tight">Harness</h1>
+    <p class="hint max-w-[80ch]">Read only. Everything one target's agent is given: its instructions, tools and the checks around
+      them, with the default harness or with none. Built from the same code the evals run, so it always matches.</p>
+  </div>
+  <div id="harnessControls" class="mb-4 flex flex-wrap items-center gap-x-6 gap-y-2"></div>
+  <div id="harnessBody"></div>
 </div>
 
 <!-- Trace drawer (opened from case cards in the Run view) -->

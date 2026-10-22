@@ -3,7 +3,7 @@
 import {$, $$, esc, store, fmtDate} from './ui.js';
 import {app, freshState, MODELS, CONTEXTS, SAMPLE_PROMPTS, PROMPT_SETS, DEFAULT_RUBRIC, modelName} from './config.js';
 import {postJSON, readNdjson} from './api.js';
-import {renderAll, selectCell} from './results.js';
+import {renderAll, renderRunTimes, selectCell} from './results.js';
 import {renderEconomics, rescore} from './econ.js';
 
 function chip(group, value, label, checked, describedBy = '') {
@@ -203,18 +203,22 @@ async function submit(e) {
   $('#runBtn').disabled = true;
   $('#empty').classList.add('hidden');
   const t0 = performance.now();
+  app.state.startedAt = Date.now();
   const elapsed = () => ((performance.now() - t0) / 1000).toFixed(1) + 's';
   const progress = () => {
     const {state} = app;
     const done = Object.values(state.runs).reduce((n, r) => n + Object.keys(r).length, 0) + Object.keys(state.errors).length;
     const run = state.repeats > 1 ? `Run ${state.currentRun || 1}/${state.repeats} · ` : '';
     showStatus(`Running… ${run}${done}/${(state.cells.length * state.repeats) || '?'} cells done · ${elapsed()}`);
+    renderRunTimes();
   };
   const timer = setInterval(progress, 200);
   try {
     const res = await postJSON('/api/run', body);
     await readNdjson(res, handleEvent);
     clearInterval(timer);
+    app.state.totalSeconds = (performance.now() - t0) / 1000;
+    renderRunTimes();
     const runs = app.state.repeats > 1 ? ` × ${app.state.repeats} runs` : '';
     showStatus(`Done: ${app.state.cells.length} cells${runs} in ${elapsed()} (wall clock, including judging).`, 'ok');
   } catch (err) {
@@ -229,7 +233,8 @@ async function submit(e) {
 function handleEvent(ev) {
   const {state} = app;
   if (ev.type === 'plan') { state.cells = ev.cells; state.repeats = ev.repeats; state.mlflow = ev.mlflow; }
-  else if (ev.type === 'run_start') state.currentRun = ev.run;
+  else if (ev.type === 'run_start') { state.currentRun = ev.run; state.runStartedAt[ev.run] = Date.now(); }
+  else if (ev.type === 'run_end') state.runSeconds[ev.run] = ev.seconds;
   else if (ev.type === 'cell') (state.runs[ev.run] ??= {})[ev.report.id] = ev.report;
   else if (ev.type === 'cell_error') state.errors[ev.id] = `Run ${ev.run}: ${ev.error}`;
   else return;
@@ -248,6 +253,9 @@ export function loadMatrix(m) {
     runs: m.runs,
     errors: m.errors,
     loadedFrom: m.id,
+    runSeconds: m.run_seconds ?? {},
+    totalSeconds: m.seconds,
+    startedAt: m.status === 'RUNNING' ? m.start_time : null,
     mlflow: {matrix_id: m.id, matrix: m.mlflow_url, cell_runs: Object.fromEntries(cells.map((c) => [c.id, c.run_id])),
              cells: Object.fromEntries(m.cells.map((c) => [c.id, c.mlflow_url]).filter(([, u]) => u))},
   });

@@ -60,6 +60,8 @@ def _matrix(parent, children: list) -> dict:
         'name': parent.info.run_name,
         'start_time': parent.info.start_time,
         'end_time': parent.info.end_time,
+        # Wall clock for the whole matrix, from MLflow's own run times (None while it's still running).
+        'seconds': (parent.info.end_time - parent.info.start_time) / 1000 if parent.info.end_time else None,
         'status': parent.info.status,
         'params': dict(parent.data.params),
         'cells': sorted((_cell(c) for c in children), key=lambda c: c['id']),
@@ -124,6 +126,7 @@ def _load_matrix(matrix_id: str) -> dict:
                 errors[cell['id']] = f'Run {key.removeprefix("error.run-")}: {value}'
     matrix['runs'] = runs
     matrix['errors'] = errors
+    matrix['run_seconds'] = {m.step: m.value for m in client.get_metric_history(matrix_id, 'run_seconds')}
     matrix['repeats'] = int(matrix['params'].get('repeats', max(runs, default=1)))
     return matrix
 

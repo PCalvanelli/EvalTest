@@ -9,6 +9,7 @@ import {renderEconomics} from './econ.js';
 import {initDrawer, closeTraceDrawer, showTraces, invalidateTraceCache} from './traces.js';
 import {showHistory} from './history.js';
 import {showLabels} from './labels.js';
+import {showHarness} from './harness.js';
 
 const THEMES = ['auto', 'light', 'dark'];
 function applyTheme(theme) {
@@ -39,6 +40,7 @@ async function init() {
   register('history', () => showHistory());
   register('traces', (params, {changedView}) => { if (changedView) invalidateTraceCache(); showTraces(params); });
   register('labels', (params) => showLabels(params));
+  register('harness', (params) => showHarness(params));
   window.addEventListener('hashchange', () => { closeTraceDrawer(); route(); });
   route();
 }

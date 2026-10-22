@@ -309,6 +309,47 @@ def catalog_text() -> str:
     return '\n'.join(out)
 
 
+@cache
+def compact_catalog_text() -> str:
+    """The same catalog with each entity's dimensions described once: a metric group lists `prefix__*` for an entity
+    whose dimensions it can all reach (e.g. order__customer__* from order_lines), and the descriptions follow at the end.
+    Same content as catalog_text(), roughly half the tokens, since the customer, order and product dimensions
+    otherwise repeat under every metric group that reaches them."""
+    groups: dict[tuple[str, ...], list] = {}
+    for metric in _engine().list_metrics():
+        groups.setdefault(tuple(sorted(m.semantic_model_name for m in metric.semantic_models)), []).append(metric)
+    entity_dims: dict[str, dict[str, str]] = {}  # entity -> dimension name -> description
+    for metrics in groups.values():
+        for d in metrics[0].dimensions:
+            if not d.dunder_name.startswith('metric_time'):
+                *path, name = d.dunder_name.split('__')
+                entity_dims.setdefault(path[-1], {})[name] = (d.description or '').strip()
+    out = []
+    for models, metrics in groups.items():
+        out += [f'## {" + ".join(models)}', 'Metrics:']
+        out += [f'- {m.name} ({m.type.name.lower()}): {(m.description or "").strip()}' for m in metrics]
+        by_prefix: dict[str, set[str]] = {}
+        dims = []
+        for d in sorted(metrics[0].dimensions, key=lambda d: d.dunder_name):
+            if d.dunder_name.startswith('metric_time'):
+                dims.append(f'metric_time__<grain> (smallest grain: {d.dunder_name.split("__")[1]})')
+            else:
+                prefix, name = d.dunder_name.rsplit('__', 1)
+                by_prefix.setdefault(prefix, set()).add(name)
+        for prefix, names in sorted(by_prefix.items()):
+            if names == set(entity_dims[prefix.split('__')[-1]]):
+                dims.append(f'{prefix}__*')
+            else:
+                dims += [f'{prefix}__{n}' for n in sorted(names)]
+        out += [f'Group by / filter on: {", ".join(dims)}', '']
+    out += ['## Dimensions', '`prefix__*` above means every dimension of that entity, e.g. order__customer__* includes '
+            'order__customer__customer_segment.']
+    for entity, dims in sorted(entity_dims.items()):
+        out.append(f'{entity}__:')
+        out += [f'- {name}: {desc}' for name, desc in sorted(dims.items())]
+    return '\n'.join(out)
+
+
 def model_yaml() -> str:
     """The dbt semantic models and metrics definitions, as authored."""
     return '\n\n'.join(f'# dbt/models/{p.name}\n{p.read_text()}' for p in sorted((PROJECT / 'models').glob('*.yml')))
