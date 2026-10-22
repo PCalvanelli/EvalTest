@@ -1,4 +1,4 @@
-# Text-to-SQL Eval Playground
+# Semantic Layer Bench
 
 **Which layer should an AI agent query to answer business questions: raw SQL, Malloy, or dbt MetricFlow?** This app measures it.
 
