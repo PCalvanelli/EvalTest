@@ -1,0 +1,8 @@
+evaltest:
+  target: dev
+  outputs:
+    dev:
+      type: duckdb
+      path: "{{ env_var('EVALTEST_WAREHOUSE', 'data/warehouse.duckdb') }}"
+      schema: semantic
+      read_only: true

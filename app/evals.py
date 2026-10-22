@@ -8,12 +8,11 @@ from collections.abc import Sequence
 from dataclasses import dataclass, replace
 
 import mlflow
-from pydantic_ai.messages import ToolCallPart
 from pydantic_evals import Case, Dataset
 from pydantic_evals.evaluators import Evaluator, EvaluatorContext, LLMJudge
 
 from . import db, tracking
-from .agent import Context, MalloyAnswer, SemanticAnswer, answer_sql, build_agent, make_model
+from .agent import Context, MalloyAnswer, MetricFlowAnswer, answer_sql, build_agent, make_model
 
 
 @dataclass
@@ -44,6 +43,7 @@ class TracedLLMJudge(LLMJudge):
     """LLMJudge whose calls are traced to the cell's MLflow run. Reports under the plain LLMJudge name."""
 
     run_id: str | None = None
+    trace_tags: dict[str, str] | None = None
 
     @classmethod
     def get_serialization_name(cls) -> str:
@@ -54,7 +54,7 @@ class TracedLLMJudge(LLMJudge):
         ctx = replace(ctx, output={k: v for k, v in ctx.output.items() if k != 'trace_id'})
         with tracking.span(self.run_id, f'judge {ctx.name}', tracking.SpanType.EVALUATOR, {'case': ctx.name}) as span:
             if span is not None:
-                mlflow.update_current_trace(tags={'kind': 'judge', 'case': ctx.name})
+                mlflow.update_current_trace(tags={**(self.trace_tags or {}), 'kind': 'judge', 'case': ctx.name})
             verdict = await super().evaluate(ctx)
             if span is not None:
                 span.set_outputs(verdict)
@@ -74,13 +74,16 @@ async def run_eval(
     context: Context,
     limiter: asyncio.Semaphore,
     mlflow_run_id: str | None = None,
+    trace_tags: dict[str, str] | None = None,
 ) -> dict:
     async def task(prompt: str) -> dict:
         # One MLflow trace per case: the agent, model and tool spans nest under this root span.
         with tracking.span(mlflow_run_id, label, tracking.SpanType.AGENT, {'prompt': prompt}) as span:
+            if span is not None:
+                mlflow.update_current_trace(tags={**(trace_tags or {}), 'kind': 'agent'})
             output = await run_case(prompt)
             if span is not None:
-                span.set_outputs({k: output[k] for k in ('sql', 'semantic_query', 'malloy_query', 'rows', 'error')})
+                span.set_outputs({k: output[k] for k in ('sql', 'metricflow_query', 'malloy_query', 'rows', 'error')})
         return {**output, 'trace_id': span.trace_id if span is not None else None}
 
     async def run_case(prompt: str) -> dict:
@@ -92,11 +95,11 @@ async def run_eval(
             try:
                 result = await agent.run(prompt)
             except Exception as e:
-                return {'sql': None, 'semantic_query': None, 'malloy_query': None, 'explanation': None, 'rows': None,
+                return {'sql': None, 'metricflow_query': None, 'malloy_query': None, 'explanation': None, 'rows': None,
                         'error': f'{type(e).__name__}: {e}', 'seconds': time.perf_counter() - start, 'usage': None}
             seconds = time.perf_counter() - start
         answer = result.output
-        semantic_query = answer.query.model_dump(exclude_defaults=True) if isinstance(answer, SemanticAnswer) else None
+        metricflow_query = answer.query.model_dump(exclude_defaults=True) if isinstance(answer, MetricFlowAnswer) else None
         malloy_query = answer.malloy if isinstance(answer, MalloyAnswer) else None
         try:
             sql = await answer_sql(answer)
@@ -104,12 +107,9 @@ async def run_eval(
         except Exception as e:
             sql, rows, error = getattr(answer, 'sql', None), None, str(e)
         u = result.usage
-        glossary_searches = sum(
-            isinstance(p, ToolCallPart) and p.tool_name == 'search_glossary' for m in result.all_messages() for p in m.parts
-        )
         return {
             'sql': sql,
-            'semantic_query': semantic_query,
+            'metricflow_query': metricflow_query,
             'malloy_query': malloy_query,
             'explanation': answer.explanation,
             'rows': rows,
@@ -117,7 +117,7 @@ async def run_eval(
             'seconds': seconds,
             'usage': {'input_tokens': u.input_tokens, 'output_tokens': u.output_tokens,
                       'cache_read_tokens': u.cache_read_tokens, 'cache_write_tokens': u.cache_write_tokens,
-                      'requests': u.requests, 'tool_calls': u.tool_calls, 'glossary_searches': glossary_searches},
+                      'requests': u.requests, 'tool_calls': u.tool_calls},
         }
 
     judge = make_model(judge_model, api_key, workspace_id)
@@ -127,7 +127,7 @@ async def run_eval(
             Case(name=f'q{i + 1}', inputs=p['text'], expected_output=p.get('expected_sql') or None)
             for i, p in enumerate(prompts)
         ],
-        evaluators=[ExecutesOK(), ResultMatches(), TracedLLMJudge(rubric=rubric, model=judge, include_input=True, run_id=mlflow_run_id)],
+        evaluators=[ExecutesOK(), ResultMatches(), TracedLLMJudge(rubric=rubric, model=judge, include_input=True, run_id=mlflow_run_id, trace_tags=trace_tags)],
     )
 
     start = time.perf_counter()
@@ -145,7 +145,7 @@ async def run_eval(
             'prompt': c.inputs,
             'expected_sql': c.expected_output,
             'sql': c.output['sql'],
-            'semantic_query': c.output['semantic_query'],
+            'metricflow_query': c.output['metricflow_query'],
             'malloy_query': c.output['malloy_query'],
             'explanation': c.output['explanation'],
             'rows': c.output['rows'],
@@ -177,6 +177,5 @@ async def run_eval(
         'total_tokens': tokens,
         'tool_calls': sum(c.get('tool_calls', 0) for c in cases),
         'requests': sum(c.get('requests', 0) for c in cases),
-        'glossary_searches': sum(c.get('glossary_searches', 0) for c in cases),
         'cases': cases,
     }

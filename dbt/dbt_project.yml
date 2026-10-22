@@ -1,0 +1,12 @@
+# dbt project for the MetricFlow context. Only `dbt parse` runs (to build target/semantic_manifest.json):
+# the models are stubs pointing at views that app/warehouse/04_semantic.sql already builds.
+name: evaltest
+version: '1.0'
+profile: evaltest
+config-version: 2
+model-paths: [models]
+macro-paths: [macros]
+models:
+  evaltest:
+    +schema: semantic
+    +materialized: view

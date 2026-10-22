@@ -12,20 +12,30 @@ from pathlib import Path
 os.environ.setdefault('PYDANTIC_AI_NO_BANNER', '1')
 os.environ.setdefault('MLFLOW_DISABLE_AGENT_HINT', '1')  # MLflow logs a coding-assistant hint on import otherwise
 
-from fastapi import FastAPI, HTTPException  # noqa: E402
+from fastapi import FastAPI, HTTPException, Request  # noqa: E402
 from fastapi.responses import FileResponse, StreamingResponse  # noqa: E402
+from fastapi.staticfiles import StaticFiles  # noqa: E402
 from pydantic import BaseModel, Field  # noqa: E402
 
-from . import db, malloy_bridge, tracking  # noqa: E402
-from .agent import CONTEXTS, GLOSSARY, HARNESS_CAPABILITIES, Context  # noqa: E402
+from . import db, history, malloy_bridge, metricflow_bridge, mlflow_ui, tracking  # noqa: E402
+from .agent import CONTEXTS, HARNESS_CAPABILITIES, Context  # noqa: E402
 from .evals import run_eval  # noqa: E402
 from .pricing import PRICES_AS_OF, PRICING  # noqa: E402
-from .semantic import layer  # noqa: E402
 
 STATIC = Path(__file__).resolve().parent.parent / 'static'
 MAX_CONCURRENT_AGENT_RUNS = 6
 
 app = FastAPI(title='Text-to-SQL Eval Playground')
+app.include_router(history.router)
+
+
+@app.middleware('http')
+async def revalidate_static(request: Request, call_next):
+    # The page is ES modules; without this the browser can keep running an old module after an edit.
+    response = await call_next(request)
+    if request.url.path == '/' or request.url.path.startswith('/static/'):
+        response.headers['Cache-Control'] = 'no-cache'
+    return response
 
 
 class PromptIn(BaseModel):
@@ -60,14 +70,14 @@ def config() -> dict:
     return {
         'schema': db.schema_overview(),
         'table_count': len(db.list_tables()),
-        'semantic_catalog': layer.catalog_text(),
-        'glossary': GLOSSARY,
+        'metricflow_catalog': metricflow_bridge.catalog_text(),
+        'metricflow_yaml': metricflow_bridge.model_yaml(),
         'malloy_model': malloy_bridge.MODEL_TEXT,
         'contexts': CONTEXTS,
         'pricing': PRICING,
         'prices_as_of': PRICES_AS_OF,
         'harness_capabilities': HARNESS_CAPABILITIES,
-        'mlflow': {'enabled': tracking.ENABLED, 'ui_url': tracking.UI_URL},
+        'mlflow': {'enabled': tracking.ENABLED, 'embedded': _MLFLOW_APP is not None, 'ui_url': tracking.UI_URL},
     }
 
 
@@ -116,6 +126,7 @@ async def run(req: RunRequest) -> StreamingResponse:
                 context=cell['context'],
                 limiter=limiter,
                 mlflow_run_id=tracker.cell_runs[cell['id']] if tracker else None,
+                trace_tags=tracker.trace_tags(cell['id'], run_no) if tracker else None,
             )
         except Exception as e:
             error = f'{type(e).__name__}: {e}'
@@ -143,3 +154,10 @@ async def run(req: RunRequest) -> StreamingResponse:
         yield json.dumps({'type': 'done'}) + '\n'
 
     return StreamingResponse(stream(), media_type='application/x-ndjson')
+
+
+app.mount('/static', StaticFiles(directory=STATIC), name='static')
+# MLflow's own UI at /mlflow, from the same store. Mounted last: it answers every path our routes don't.
+_MLFLOW_APP = mlflow_ui.asgi_app()
+if _MLFLOW_APP is not None:
+    app.mount('/', _MLFLOW_APP)

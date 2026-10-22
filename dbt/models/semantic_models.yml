@@ -1,0 +1,157 @@
+# MetricFlow semantic models: entities, dimensions and measures over the semantic.* views.
+# The governed metrics built from these measures are in metrics.yml.
+version: 2
+
+models:
+  - name: time_spine
+    description: One row per day, 2023-01-01 to 2025-12-31.
+    time_spine:
+      standard_granularity_column: date_day
+    columns:
+      - name: date_day
+        granularity: day
+
+semantic_models:
+  - name: customers
+    description: People resolved across Shopify, Stripe, Zendesk and HubSpot by email. One row per person.
+    model: ref('customers')
+    entities:
+      - {name: customer, type: primary, expr: customer_key}
+    dimensions:
+      - {name: email, type: categorical, description: Customer email.}
+      - {name: customer_name, type: categorical, description: Customer full name (not unique).}
+      - {name: country, type: categorical, expr: country_code, description: "Two-letter country code, e.g. US, DE. Null without a Shopify account."}
+      - name: customer_segment
+        type: categorical
+        description: "wholesale (Shopify wholesale tag), member (has ever held a membership subscription), retail (everyone else)."
+      - name: acquisition_source
+        type: categorical
+        description: "organic_search, paid_search, paid_social, email_marketing, direct_traffic, referrals, unknown."
+
+  - name: products
+    description: Products.
+    model: ref('products')
+    entities:
+      - {name: product, type: primary, expr: product_id}
+    dimensions:
+      - {name: product_name, type: categorical, description: Product name.}
+      - {name: category, type: categorical, description: "Footwear, Apparel, Accessories, Bags, Gear."}
+      - {name: vendor, type: categorical, description: Brand / vendor.}
+
+  - name: orders
+    description: >
+      Shopify orders (test orders excluded), USD. Revenue follows finance's definition: merchandise only (no
+      shipping or tax), cancelled orders excluded, refunds deducted for net revenue.
+    model: ref('orders')
+    defaults: {agg_time_dimension: order_date}
+    entities:
+      - {name: order, type: primary, expr: order_id}
+      - {name: customer, type: foreign, expr: customer_key}
+    dimensions:
+      - {name: order_date, type: time, type_params: {time_granularity: day}, description: "Order date (UTC), 2024-01 to 2025-09."}
+      - {name: order_status, type: categorical, description: "completed, pending, refunded, partially_refunded, cancelled."}
+      - {name: sales_channel, type: categorical, description: "web, pos, mobile_app."}
+      - {name: currency, type: categorical, description: "Original order currency (USD, EUR, GBP)."}
+      - {name: is_first_order, type: categorical, description: TRUE for a customer's first order.}
+      - {name: is_cancelled, type: categorical, description: TRUE for cancelled orders.}
+    measures:
+      - {name: orders_all, agg: count, expr: order_id, description: Orders including cancelled ones.}
+      - {name: orders_valid, agg: sum, expr: "CASE WHEN NOT is_cancelled THEN 1 ELSE 0 END", description: Non-cancelled orders.}
+      - {name: gross_revenue_usd, agg: sum, expr: "CASE WHEN NOT is_cancelled THEN subtotal_usd END", description: Merchandise subtotal of non-cancelled orders.}
+      - {name: refunds_usd, agg: sum, expr: "CASE WHEN NOT is_cancelled THEN refund_usd END", description: "Refunds capped at the order subtotal, non-cancelled orders."}
+      - {name: net_revenue_usd, agg: sum, expr: "CASE WHEN NOT is_cancelled THEN subtotal_usd - refund_usd END", description: "Subtotal minus refunds, non-cancelled orders."}
+      - {name: active_customer_keys, agg: count_distinct, expr: "CASE WHEN NOT is_cancelled THEN customer_key END", description: Distinct customers with a non-cancelled order.}
+
+  - name: order_lines
+    description: Order line items with products, USD. Cancelled orders are excluded from the sales metrics.
+    model: ref('order_lines')
+    defaults: {agg_time_dimension: order_date}
+    entities:
+      - {name: order_line, type: primary, expr: order_line_id}
+      - {name: order, type: foreign, expr: order_id}
+      - {name: product, type: foreign, expr: product_id}
+    dimensions:
+      - {name: order_date, type: time, type_params: {time_granularity: day}, description: Order date.}
+    measures:
+      - {name: units_sold_qty, agg: sum, expr: "CASE WHEN NOT is_cancelled THEN quantity END", description: Units on non-cancelled orders.}
+      - {name: product_revenue_usd, agg: sum, expr: "CASE WHEN NOT is_cancelled THEN line_amount_usd END", description: "Line amounts after discounts, non-cancelled orders."}
+      - {name: orders_with_product, agg: count_distinct, expr: "CASE WHEN NOT is_cancelled THEN order_id END", description: Distinct non-cancelled orders.}
+
+  - name: subscription_months
+    description: >
+      Membership subscriptions evaluated at each month end (grain: subscription × month, 2024-01 to 2025-09).
+      MRR and active counts are point-in-time.
+    model: ref('subscription_months')
+    defaults: {agg_time_dimension: as_of_month}
+    entities:
+      - {name: subscription_month, type: primary, expr: subscription_month_id}
+      - {name: subscription, type: foreign, expr: subscription_id}
+      - {name: customer, type: foreign, expr: customer_key}
+    dimensions:
+      - {name: as_of_month, type: time, expr: month, type_params: {time_granularity: month}, description: "Month (first day, e.g. 2025-06-01); values are as of that month's end."}
+      - {name: plan_name, type: categorical, description: "Basic Monthly, Pro Monthly, Basic Annual, Pro Annual."}
+      - {name: billing_interval, type: categorical, description: month or year.}
+    measures:
+      - name: mrr_usd
+        agg: sum
+        expr: "CASE WHEN active_at_month_end THEN monthly_amount_usd ELSE 0 END"
+        description: Monthly price (annual / 12) of subscriptions active at month end.
+        non_additive_dimension: {name: as_of_month, window_choice: max}
+      - name: active_subscription_count
+        agg: sum
+        expr: "CASE WHEN active_at_month_end THEN 1 ELSE 0 END"
+        description: Subscriptions active at month end.
+        non_additive_dimension: {name: as_of_month, window_choice: max}
+      - {name: new_subscription_count, agg: sum, expr: "CASE WHEN started_in_month THEN 1 ELSE 0 END", description: Subscriptions started in the month.}
+      - {name: churned_subscription_count, agg: sum, expr: "CASE WHEN canceled_in_month THEN 1 ELSE 0 END", description: Subscriptions canceled in the month.}
+
+  - name: tickets
+    description: Zendesk support tickets with service-level measures.
+    model: ref('tickets')
+    defaults: {agg_time_dimension: created_date}
+    entities:
+      - {name: ticket, type: primary, expr: ticket_id}
+      - {name: customer, type: foreign, expr: customer_key}
+    dimensions:
+      - {name: created_date, type: time, type_params: {time_granularity: day}, description: Ticket creation date.}
+      - {name: priority, type: categorical, description: "low, normal, high, urgent."}
+      - {name: channel, type: categorical, description: "email, web, chat, phone."}
+      - {name: status, type: categorical, description: "new, open, pending, solved, closed."}
+      - {name: subject, type: categorical, description: Ticket subject line.}
+    measures:
+      - {name: tickets_all, agg: count, expr: ticket_id, description: Tickets.}
+      - {name: tickets_solved, agg: sum, expr: "CASE WHEN is_solved THEN 1 ELSE 0 END", description: Tickets in solved or closed status.}
+      - {name: first_reply_hours, agg: average, description: "Hours to the first public agent reply, tickets with a reply."}
+      - {name: resolution_hours, agg: average, description: "Hours from creation to solved, solved tickets."}
+
+  - name: ad_stats
+    description: Paid media across Google Ads and Facebook Ads, daily per campaign, USD.
+    model: ref('ad_stats')
+    defaults: {agg_time_dimension: activity_date}
+    entities:
+      - {name: ad_stat, type: primary, expr: ad_stat_id}
+    dimensions:
+      - {name: activity_date, type: time, expr: '"date"', type_params: {time_granularity: day}, description: Activity date.}
+      - {name: platform, type: categorical, description: google_ads or facebook_ads.}
+      - {name: campaign_name, type: categorical, description: Campaign name.}
+    measures:
+      - {name: spend_usd, agg: sum, expr: cost_usd, description: Ad spend.}
+      - {name: click_count, agg: sum, expr: clicks, description: Clicks.}
+      - {name: impression_count, agg: sum, expr: impressions, description: Impressions.}
+
+  - name: inventory_snapshots
+    description: >
+      End-of-day stock per warehouse and product (2025 only). Quantities are semi-additive: over a date range
+      the metrics take the latest snapshot, never a sum across dates.
+    model: ref('inventory_snapshots')
+    defaults: {agg_time_dimension: snapshot_date}
+    entities:
+      - {name: inventory_snapshot, type: primary, expr: snapshot_id}
+      - {name: product, type: foreign, expr: product_id}
+    dimensions:
+      - {name: snapshot_date, type: time, type_params: {time_granularity: day}, description: "Snapshot date, 2025-01-01 to 2025-09-30."}
+      - {name: warehouse_code, type: categorical, description: "NJ1 (Newark), NV1 (Reno), NL1 (Rotterdam)."}
+    measures:
+      - {name: qty_on_hand, agg: sum, description: Units in stock., non_additive_dimension: {name: snapshot_date, window_choice: max}}
+      - {name: qty_reserved, agg: sum, description: Units allocated to open orders., non_additive_dimension: {name: snapshot_date, window_choice: max}}
+      - {name: qty_available, agg: sum, expr: qty_on_hand - qty_reserved, description: On hand minus reserved., non_additive_dimension: {name: snapshot_date, window_choice: max}}

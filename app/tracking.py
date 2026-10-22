@@ -6,8 +6,9 @@ finishes. Every case is one trace (agent, model and tool spans from MLflow's Pyd
 linked to its cell's run, with the eval checks attached as feedback. Judge calls get their own traces,
 linked to the same run.
 
-Logs to a local SQLite store in data/ by default. Set MLFLOW_TRACKING_URI to use a tracking server, or
-EVAL_MLFLOW=off to disable. A tracking failure is logged and never fails an eval.
+Logs to a local SQLite store in data/ by default, and the playground serves MLflow's own UI at /mlflow from
+that store (app/mlflow_ui.py). Set MLFLOW_TRACKING_URI to use a tracking server instead, or EVAL_MLFLOW=off to
+disable. A tracking failure is logged and never fails an eval.
 """
 
 from __future__ import annotations
@@ -33,7 +34,9 @@ DATA = Path(__file__).resolve().parent.parent / 'data'
 ENABLED = os.environ.get('EVAL_MLFLOW', 'on').lower() not in ('off', '0', 'false')
 TRACKING_URI = os.environ.get('MLFLOW_TRACKING_URI') or f'sqlite:///{DATA / "mlflow.db"}'
 _REMOTE = TRACKING_URI.startswith(('http://', 'https://'))
-UI_URL = (os.environ.get('MLFLOW_UI_URL') or (TRACKING_URI if _REMOTE else 'http://127.0.0.1:5000')).rstrip('/')
+# A local store's UI is mounted on our own server at /mlflow (same origin); a tracking server has its own.
+EMBEDDED_UI = ENABLED and TRACKING_URI.startswith('sqlite:')
+UI_URL = (os.environ.get('MLFLOW_UI_URL') or (TRACKING_URI if _REMOTE else '/mlflow')).rstrip('/')
 EXPERIMENT = os.environ.get('MLFLOW_EXPERIMENT_NAME', 'text-to-sql-evals')
 
 _lock = threading.Lock()  # cells finish concurrently; one writer at a time keeps the SQLite store happy
@@ -122,8 +125,12 @@ class MatrixTracker:
             _log.exception('MLflow: could not start runs; continuing without tracking')
             return None
 
+    def trace_tags(self, cell_id: str, run_no: int) -> dict[str, str]:
+        return {'matrix': self.parent_id, 'cell': cell_id, 'run': str(run_no)}
+
     def urls(self) -> dict:
-        return {'matrix': run_url(self.parent_id), 'cells': {cid: run_url(rid) for cid, rid in self.cell_runs.items()}}
+        return {'matrix_id': self.parent_id, 'matrix': run_url(self.parent_id), 'cell_runs': dict(self.cell_runs),
+                'cells': {cid: run_url(rid) for cid, rid in self.cell_runs.items()}}
 
     def log_cell(self, cell_id: str, run_no: int, report: dict) -> None:
         try:
@@ -152,7 +159,7 @@ class MatrixTracker:
         }
         ts = int(time.time() * 1000)
         self.client.log_batch(run_id, metrics=[Metric(k, float(v), ts, run_no) for k, v in values.items()])
-        self.client.log_dict(run_id, cases, f'run-{run_no}/cases.json')
+        self.client.log_dict(run_id, report, f'run-{run_no}/report.json')  # lets History re-render this run
         self.outcomes[cell_id][run_no] = [c['passed'] for c in cases]
         self.costs[cell_id][run_no] = cost / n
 
@@ -160,9 +167,7 @@ class MatrixTracker:
             trace_id = c.get('trace_id')
             if not trace_id:
                 continue
-            self.client.set_trace_tag(trace_id, 'kind', 'agent')
-            self.client.set_trace_tag(trace_id, 'case', c['name'])
-            self.client.set_trace_tag(trace_id, 'run', str(run_no))
+            self.client.set_trace_tag(trace_id, 'case', c['name'])  # kind/matrix/cell/run were set in the span
             for check, result in c['checks'].items():
                 judged = check == 'LLMJudge'
                 mlflow.log_feedback(

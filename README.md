@@ -2,7 +2,7 @@
 
 Small local app for evaluating a text-to-SQL agent over a seeded, dbt-style DuckDB warehouse, as a matrix:
 
-**model** (Opus / Sonnet / Haiku) × **harness** ([Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/) off / on) × **business context** (none / glossary in prompt / glossary search / YAML semantic layer / Malloy)
+**model** (Opus / Sonnet / Haiku) × **harness** ([Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/) off / on) × **business context** (raw text-to-SQL / dbt MetricFlow / Malloy)
 
 The question this playground answers: *which intermediate representation between a natural-language question and the warehouse gives the highest, most consistent accuracy?*
 
@@ -22,7 +22,7 @@ documentation (`COMMENT ON`, like dbt `persist_docs`).
 
 **The warehouse holds no business metrics.** Tables contain system and entity facts only: amounts, statuses, timestamps, flags and keys.
 Terms like *net revenue*, *MRR*, *active customers*, *churn*, *first response time* and *customer segment* are defined
-only in the semantic layer, as they would be in a real dbt + MetricFlow/Cube stack. A raw-SQL agent has to work out what
+only in the semantic layers (dbt MetricFlow and Malloy), as they would be in a real dbt stack. A raw-SQL agent has to work out what
 the business means by them, which is the gap the semantic layer is meant to close.
 
 Other deliberate traps:
@@ -39,20 +39,14 @@ Other deliberate traps:
 ## Agents
 
 - **Raw SQL mode:** the agent doesn't get the schema in its prompt. It has to discover the warehouse with `list_tables`, `describe_table` (columns, docs and sample rows) and `run_sql`, the way an agent would on a real warehouse.
-- **Glossary mode:** raw SQL mode plus `app/glossary.md`, a plain-language business glossary in the agent's instructions.
-  It has the same definitions as the semantic layer, written the way Finance would write them, with no table names, column names or SQL.
-  This tests whether written definitions alone close the gap without a governed, compiled layer.
-- **Glossary search mode:** raw SQL mode plus a `search_glossary(query)` tool over the same glossary (keyword search
-  returning the top 3 entries, `app/glossary.py`). The glossary is not in the prompt, so the agent has to decide to look
-  terms up, as it would with a wiki or docs search. Each case and cell reports how many searches the agent made.
-- **Semantic mode:** the agent sees only the semantic catalog (`app/semantic/warehouse.yaml`). It has six models (`orders`, `order_lines`, `subscriptions`, `support`, `marketing` and `inventory`), and they hold the governed metric definitions. A model can be built on a SQL subquery: for example, MRR evaluates every subscription at each month end, and first response time uses the first public agent comment. Its only tool is `query_metrics`. A query targets one model, and `app/semantic/layer.py` compiles it to SQL, so every cell is scored the same way. Cross-domain questions (e.g. customers with both orders and tickets) can't be expressed, and they fail on purpose.
+- **dbt MetricFlow mode:** the agent gets a metrics catalog generated from the dbt project in `dbt/` (`models/semantic_models.yml`, `models/metrics.yml`) and one tool, `query_metrics` (metrics, group by, Jinja `where`, order, limit, like `mf query`). `app/metricflow_bridge.py` compiles queries in-process with MetricFlow (`dbt parse` builds the manifest on first use) and runs the SQL like every other context. The semantic models sit on views in a `semantic` schema (`app/warehouse/04_semantic.sql`) that the raw-SQL agent can't see or query.
 - **Malloy mode:** the agent writes [Malloy](https://www.malloydata.dev/) queries against `app/malloy/warehouse.malloy` and has a single tool, `run_malloy`.
-  The model has the **same governed definitions** as the YAML layer, but it's built the idiomatic Malloy way: sources are joined, and a `customers`
+  The model has the **same governed definitions** as the dbt metrics, but it's built the idiomatic Malloy way: sources are joined, and a `customers`
   hub reaches orders, tickets and memberships. Queries can cross domains, nest, pipeline and compute ad-hoc fields. Queries compile through a Node
   sidecar (`malloy/compile.mjs`, the official `@malloydata/malloy` compiler) and execute in Python like every other context.
-  `uv run python -m app.malloy_bridge` checks parity: every gold answer and every governed metric must match the YAML layer.
+  `uv run python -m app.metricflow_bridge` checks parity: every gold answer must match in MetricFlow and Malloy, and the two must agree on every governed metric.
 - **Harness capabilities** (each one can be toggled in the UI):
-  - `ToolGuardrail`: SQL must be SELECT-only, and semantic queries must compile.
+  - `ToolGuardrail`: SQL must be SELECT-only, and MetricFlow / Malloy queries must compile.
   - `OutputGuardrail`: the final query must execute or the model retries.
   - `SystemReminders`, `Planning` and `RepairToolArguments`.
 
@@ -60,7 +54,7 @@ Other deliberate traps:
 
 The eval framework is [Pydantic Evals](https://pydantic.dev/docs/ai/evals/). Each prompt is a `Case`, checked by:
 - `ExecutesOK`: the query runs;
-- `ResultMatches`: only when you give an expected SQL; compares result values ignoring row order. The sample prompts' expected SQL encodes the semantic layer's definitions and returns the same results;
+- `ResultMatches`: only when you give an expected SQL; compares result values ignoring row order. The sample prompts' expected SQL encodes the governed metric definitions and returns the same results;
 - `LLMJudge`: grades against your rubric.
 
 A case passes only if every check passes.
@@ -98,42 +92,57 @@ The API key goes to the server once per request. It isn't stored, unless you tic
 The database file is `data/warehouse-<hash>.duckdb`. Its name changes whenever the build SQL changes, which triggers an automatic rebuild.
 `uv run python -m app.db` rebuilds it and lists the tables. `uv run python -m app.semantic.layer` compiles and runs sample semantic queries.
 
-## MLflow
+## The app: Run, History, Traces, Labels
 
-Every matrix is also recorded in MLflow, so results outlive the browser tab. To browse them:
+Everything runs on the one server. Every matrix is recorded in MLflow (a local SQLite store, `data/mlflow.db`), and the app reads it back:
 
-```bash
-uv run mlflow ui --backend-store-uri sqlite:///data/mlflow.db --port 5000
-# open http://127.0.0.1:5000, experiment "text-to-sql-evals"
-```
+- **Run**: configure and launch a matrix, then compare cells live: the grid, per-prompt k/N, cost and the Pareto frontier. Each case card has
+  **View trace**, which opens the trace in a drawer without leaving the results.
+- **History**: every matrix you've run. **Open** loads one into the Run view (grid, economics and case detail all work on past runs);
+  **Cells** shows each cell's pass^k, mean pass rate and cost; select two or more matrices to compare the same cells across them.
+- **Traces**: one trace per agent answer and one per judge call, filtered by matrix, cell, kind, result and case. The detail shows the span
+  waterfall (each model call and tool call, with inputs and outputs), the eval checks with the judge's reasoning, and your label.
+- **Labels**: mark answers correct or wrong yourself (keys `y` / `n`, `j` / `k` to move). The queue puts first the answers where the result
+  check and the judge disagree, then judge-only prompts. For each check (LLM judge, result match, the overall case result) it shows
+  agreement with you, Cohen's κ and a confusion matrix, plus the list of answers where a check disagrees with you. Low agreement means the
+  grid's pass rates can't be trusted yet.
+- **MLflow ↗** (top right) opens MLflow's own UI, served by the same server at `/mlflow`, for anything the app doesn't cover.
 
-The two UIs split the work. This page launches matrices and compares cells live: the grid, per-prompt k/N, cost and the Pareto frontier.
-MLflow keeps the history and is where you investigate:
+What MLflow stores, per matrix:
 
-- **One parent run per matrix**, holding the parameters, `prompts.json`, `rubric.md` and `summary.json`.
-- **One child run per cell.** Each repeat logs pass rate, tokens, time and cost at step = run number. When the matrix finishes, the cell logs
-  `pass_k`, `mean_pass_rate`, `flaky_prompts` and `mean_cost_per_question_usd`. Use MLflow's run comparison to chart these across matrices.
-- **One trace per case**, linked to its cell's run, with the agent, model and tool spans. The eval checks (`ExecutesOK`, `ResultMatches`,
-  `LLMJudge`, `passed`) are attached as feedback. Judge calls get their own traces (tag `kind=judge`). Add your own labels to traces in
-  MLflow's UI to check how often the judge agrees with you.
+- **One parent run**, holding the parameters, `prompts.json`, `rubric.md` and `summary.json`.
+- **One child run per cell.** Each repeat logs pass rate, tokens, time and cost at step = run number, plus `run-N/report.json` (what History
+  re-renders). When the matrix finishes, the cell logs `pass_k`, `mean_pass_rate`, `flaky_prompts` and `mean_cost_per_question_usd`.
+- **One trace per case**, linked to its cell's run and tagged with matrix, cell, case and run, with the eval checks attached as feedback.
+  Judge calls get their own traces (tag `kind=judge`). Your labels are stored as `human_correct` feedback from a HUMAN source.
 
-The page links to the matrix run above the grid and to each cell's run in its detail header. MLflow's cost metrics use list prices from
-`app/pricing.py`; prices edited in the page apply to the page only.
+MLflow's cost metrics use list prices from `app/pricing.py`; prices edited in the page apply to the page only.
 
-Settings (environment variables): `MLFLOW_TRACKING_URI` to use a tracking server instead of `data/mlflow.db`, `MLFLOW_UI_URL` if the UI isn't
-at `http://127.0.0.1:5000`, `MLFLOW_EXPERIMENT_NAME`, and `EVAL_MLFLOW=off` to disable tracking. A tracking failure is logged and never
-fails an eval. The API key is never logged.
+Settings (environment variables): `MLFLOW_TRACKING_URI` to use a tracking server instead of `data/mlflow.db` (then `/mlflow` isn't served
+and `MLFLOW_UI_URL` points at that server's UI), `MLFLOW_EXPERIMENT_NAME`, and `EVAL_MLFLOW=off` to disable tracking. A tracking failure is
+logged and never fails an eval. The API key is never logged.
+
+## Design system
+
+`static/css/tokens.css` defines the tokens: surfaces, ink, the accent (interaction only), status colors, radii and type (Instrument Sans,
+JetBrains Mono for code), each with a light and a dark value. Dark mode follows the OS unless the header's theme toggle pins it.
+`static/index.html` maps the tokens into Tailwind (`bg-surface`, `text-ink-muted`, `border-border`, `bg-accent`, ...) and defines the few
+shared components (`.panel`, `.btn`, `.input`, `.chip`, `.badge-*`, `.stat`, `.code`, `.data-table`, `.notice-*`). Use those, not raw
+Tailwind colors. Chart series colors were validated for color-vision deficiency against both surfaces; keep their order.
 
 ## Files
 
 - `app/warehouse/`: `01_raw.sql`, `02_staging.sql`, `03_marts.sql`
 - `app/db.py`: warehouse build, read-only query helper, `list_tables` / `describe_table`
-- `app/semantic/`: semantic models YAML and compiler
-- `app/glossary.md`, `app/glossary.py`: business glossary and its keyword search (`uv run python -m app.glossary` shows the parsed entries and sample searches)
+- `dbt/`: dbt project for MetricFlow (semantic models, metrics, time spine); `app/metricflow_bridge.py` compiles queries and runs the parity check
 - `app/malloy/warehouse.malloy`: Malloy semantic model
 - `app/malloy_bridge.py`, `malloy/compile.mjs`: Malloy → SQL compilation via the Node sidecar (schema-only in-memory DuckDB)
-- `app/agent.py`: agent factory (raw / glossary / glossary search / semantic / Malloy) and the harness capability set
+- `app/agent.py`: agent factory (raw SQL / dbt MetricFlow / Malloy) and the harness capability set
 - `app/evals.py`: Pydantic Evals dataset, evaluators, report summary
 - `app/tracking.py`: MLflow runs, traces and feedback for each matrix
+- `app/history.py`: read API over the MLflow store (`/api/matrices`, `/api/traces`, `/api/labels`) and labeling
+- `app/mlflow_ui.py`: MLflow's own UI mounted at `/mlflow`
 - `app/main.py`: FastAPI routes (`/`, `/api/config`, and `/api/run`, which streams NDJSON)
-- `static/index.html`: Tailwind UI
+- `static/index.html`: page shell, Tailwind token mapping and components; `static/css/tokens.css`: design tokens
+- `static/js/`: ES modules, no build step. `app.js` (entry), `router.js`, `run.js`, `results.js`, `econ.js`, `history.js`, `traces.js`,
+  `labels.js`, `ui.js`, `api.js`, `config.js`

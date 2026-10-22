@@ -1,0 +1,64 @@
+# The company's governed metrics. Same definitions as the Malloy model (app/malloy/warehouse.malloy).
+version: 2
+
+metrics:
+  # Orders
+  - {name: order_count, label: Orders, type: simple, type_params: {measure: orders_all},
+     description: "Number of orders, including cancelled ones (filter on order__is_cancelled to exclude them)."}
+  - {name: valid_order_count, label: Valid orders, type: simple, type_params: {measure: orders_valid},
+     description: Number of non-cancelled orders.}
+  - {name: gross_revenue, label: Gross revenue, type: simple, type_params: {measure: gross_revenue_usd},
+     description: "Merchandise subtotal after discounts, USD, excluding cancelled orders. Before refunds; no shipping or tax."}
+  - {name: refunds, label: Refunds, type: simple, type_params: {measure: refunds_usd},
+     description: "Refunded merchandise value, USD (capped at the order subtotal), excluding cancelled orders."}
+  - {name: net_revenue, label: Net revenue, type: simple, type_params: {measure: net_revenue_usd},
+     description: "Gross revenue minus refunds, USD, excluding cancelled orders. The company's standard revenue metric."}
+  - {name: avg_order_value, label: Average order value, type: ratio,
+     type_params: {numerator: net_revenue, denominator: valid_order_count},
+     description: "Net revenue per non-cancelled order, USD."}
+  - {name: active_customers, label: Active customers, type: simple, type_params: {measure: active_customer_keys},
+     description: Distinct customers with at least one non-cancelled order in the period.}
+
+  # Order lines
+  - {name: units_sold, label: Units sold, type: simple, type_params: {measure: units_sold_qty},
+     description: Units sold on non-cancelled orders.}
+  - {name: product_revenue, label: Product revenue, type: simple, type_params: {measure: product_revenue_usd},
+     description: "Line amounts after discounts on non-cancelled orders, USD, before refunds."}
+  - {name: product_order_count, label: Orders containing the product, type: simple, type_params: {measure: orders_with_product},
+     description: Distinct non-cancelled orders containing the product(s).}
+
+  # Subscriptions
+  - {name: mrr, label: MRR, type: simple, type_params: {measure: mrr_usd},
+     description: "Monthly recurring revenue at month end, USD: monthly plan price, or annual price / 12, for subscriptions still active at month end. Point-in-time: over a range it takes the last month."}
+  - {name: active_subscriptions, label: Active subscriptions, type: simple, type_params: {measure: active_subscription_count},
+     description: "Subscriptions active at month end (past_due counts as active). Point-in-time like MRR."}
+  - {name: new_subscriptions, label: New subscriptions, type: simple, type_params: {measure: new_subscription_count},
+     description: Subscriptions started during the period.}
+  - {name: churned_subscriptions, label: Churned subscriptions, type: simple, type_params: {measure: churned_subscription_count},
+     description: Subscriptions canceled during the period.}
+
+  # Support
+  - {name: ticket_count, label: Tickets, type: simple, type_params: {measure: tickets_all}, description: Number of tickets.}
+  - {name: solved_tickets, label: Solved tickets, type: simple, type_params: {measure: tickets_solved},
+     description: Tickets in solved or closed status.}
+  - {name: avg_first_reply_hours, label: Avg first reply (hours), type: simple, type_params: {measure: first_reply_hours},
+     description: "Mean hours from creation to the first PUBLIC agent reply (internal notes don't count), over tickets with a reply."}
+  - {name: avg_resolution_hours, label: Avg resolution (hours), type: simple, type_params: {measure: resolution_hours},
+     description: "Mean hours from creation to solved, over solved tickets."}
+
+  # Marketing
+  - {name: ad_spend, label: Ad spend, type: simple, type_params: {measure: spend_usd}, description: "Ad spend, USD."}
+  - {name: clicks, label: Clicks, type: simple, type_params: {measure: click_count}, description: Clicks.}
+  - {name: impressions, label: Impressions, type: simple, type_params: {measure: impression_count}, description: Impressions.}
+  - {name: cost_per_click, label: Cost per click, type: ratio, type_params: {numerator: ad_spend, denominator: clicks},
+     description: "Ad spend divided by clicks, USD."}
+  - {name: click_through_rate, label: Click-through rate, type: ratio, type_params: {numerator: clicks, denominator: impressions},
+     description: Clicks divided by impressions.}
+
+  # Inventory
+  - {name: units_on_hand, label: Units on hand, type: simple, type_params: {measure: qty_on_hand},
+     description: "Units physically in stock. Semi-additive: over a date range it takes the latest snapshot."}
+  - {name: units_reserved, label: Units reserved, type: simple, type_params: {measure: qty_reserved},
+     description: Units allocated to open orders (latest snapshot in range).}
+  - {name: units_available, label: Units available, type: simple, type_params: {measure: qty_available},
+     description: "Units available to sell: on hand minus reserved (latest snapshot in range)."}
