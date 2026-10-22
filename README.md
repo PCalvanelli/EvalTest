@@ -68,6 +68,20 @@ A case passes only if every check passes.
 **Consistency:** with Runs > 1, each cell reports **pass^k**, the share of prompts that passed in *every* run, plus the prompts that are **flaky** (passed in some runs but not all).
 The ★ goes to the best pass^k. Mean pass rate measures average accuracy; pass^k measures accuracy you can rely on.
 
+**Cost-weighted scoring.** Tokens are converted to dollars at each model's list price (`app/pricing.py`, editable in the UI), since token
+prices differ ~40× between models. Each cell's **expected net value per question** is
+
+    U = p·V − (1 − p)·L − c
+
+where p = P(correct) (pooled over prompts and runs), V = value of a correct answer, L = loss from a wrong answer, and c = expected
+agent token cost per question (judge tokens are excluded). V and L are explicit exchange rates, so no hidden weighting is involved.
+Alongside U, the UI shows:
+- **Pareto frontier** of accuracy vs. cost (parameter-free: a dominated cell loses for every choice of V and L);
+- **break-even values** between neighboring frontier cells, V* = Δc / Δp − L: the value of a correct answer above which the pricier, more
+  accurate cell is worth it;
+- **95% cluster-bootstrap intervals** (prompts resampled with all their runs) and **paired** differences vs. the top cell, with P(better).
+The ★ ranking can be switched between net value, pass^k and mean pass rate.
+
 ## Run
 
 ```bash

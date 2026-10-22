@@ -84,6 +84,7 @@ async def run_eval(
             'error': error,
             'seconds': seconds,
             'usage': {'input_tokens': u.input_tokens, 'output_tokens': u.output_tokens,
+                      'cache_read_tokens': u.cache_read_tokens, 'cache_write_tokens': u.cache_write_tokens,
                       'requests': u.requests, 'tool_calls': u.tool_calls, 'glossary_searches': glossary_searches},
         }
 

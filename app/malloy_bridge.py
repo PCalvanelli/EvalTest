@@ -79,7 +79,7 @@ async def compile(query: str) -> str:
 
 if __name__ == '__main__':
     # Parity check: the Malloy model must reproduce the gold answers and the YAML semantic layer exactly.
-    from .semantic.layer import Filter as F, SemanticQuery as Q, compile as compile_semantic
+    from .semantic.layer import Filter as F, OrderBy as O, SemanticQuery as Q, compile as compile_semantic
 
     GOLD = {
         'net revenue 2024': (
@@ -103,6 +103,33 @@ if __name__ == '__main__':
         'customers with orders and tickets': (
             'run: customers -> { aggregate: customer_count; where: orders.order_id is not null and tickets.ticket_id is not null }',
             'SELECT COUNT(DISTINCT o.customer_key) FROM marts.fct_orders o JOIN marts.fct_tickets t USING (customer_key)'),
+    }
+
+    # Added prompts: (Malloy, gold SQL, YAML semantic query). All three must agree.
+    GOLD_3WAY = {
+        'gross revenue by channel Q2 2025': (
+            'run: orders -> { group_by: sales_channel; aggregate: gross_revenue; where: order_date ? @2025-Q2 }',
+            "SELECT sales_channel, SUM(subtotal_usd) FROM marts.fct_orders WHERE cancelled_at IS NULL AND order_date BETWEEN '2025-04-01' AND '2025-06-30' GROUP BY 1",
+            Q(model='orders', metrics=['gross_revenue'], dimensions=['sales_channel'],
+              filters=[F(field='order_date', op='>=', value='2025-04-01'), F(field='order_date', op='<=', value='2025-06-30')])),
+        'memberships churned in 2025': (
+            'run: subscription_months -> { aggregate: churned_subscriptions; where: as_of_month ? @2025 }',
+            "SELECT COUNT(*) FROM marts.dim_subscriptions WHERE canceled_at >= '2025-01-01' AND canceled_at < '2025-10-01'",
+            Q(model='subscriptions', metrics=['churned_subscriptions'], filters=[F(field='month', op='>=', value='2025-01-01')])),
+        'top 3 products by units sold 2025': (
+            'run: order_lines -> { group_by: products.product_name; aggregate: units_sold; where: order_date ? @2025; order_by: units_sold desc; limit: 3 }',
+            "SELECT p.product_name, SUM(l.quantity) FROM marts.fct_order_lines l JOIN marts.fct_orders o USING (order_id) JOIN marts.dim_products p USING (product_id) WHERE o.cancelled_at IS NULL AND l.order_date >= '2025-01-01' GROUP BY 1 ORDER BY 2 DESC LIMIT 3",
+            Q(model='order_lines', metrics=['units_sold'], dimensions=['product_name'], filters=[F(field='order_date', op='>=', value='2025-01-01')],
+              order_by=[O(field='units_sold', desc=True)], limit=3)),
+        'AOV first vs repeat orders 2024': (
+            'run: orders -> { group_by: is_first_order; aggregate: avg_order_value; where: order_date ? @2024 }',
+            "WITH o AS (SELECT o.*, coalesce(r.refund_usd, 0) AS refund_usd, row_number() OVER (PARTITION BY o.shopify_customer_id ORDER BY o.created_at) = 1 AS is_first FROM marts.fct_orders o LEFT JOIN (SELECT order_id, SUM(refund_amount_usd) AS refund_usd FROM marts.fct_refunds GROUP BY 1) r USING (order_id)) SELECT is_first, SUM(subtotal_usd - least(refund_usd, subtotal_usd)) / COUNT(*) FROM o WHERE cancelled_at IS NULL AND year(order_date) = 2024 GROUP BY 1",
+            Q(model='orders', metrics=['avg_order_value'], dimensions=['is_first_order'],
+              filters=[F(field='order_date', op='>=', value='2024-01-01'), F(field='order_date', op='<=', value='2024-12-31')])),
+        'units on hand per warehouse end of Q2 2025': (
+            'run: inventory -> { group_by: warehouse_code; aggregate: units_on_hand; where: snapshot_date = @2025-06-30 }',
+            "SELECT warehouse_code, SUM(qty_on_hand) FROM marts.fct_inventory_snapshots WHERE snapshot_date = '2025-06-30' GROUP BY 1",
+            Q(model='inventory', metrics=['units_on_hand'], dimensions=['warehouse_code'], filters=[F(field='snapshot_date', op='=', value='2025-06-30')])),
     }
 
     # Every governed metric, grouped, against the YAML semantic layer.
@@ -143,6 +170,12 @@ if __name__ == '__main__':
             got, want = await run(malloy), db.result_set(gold_sql)
             failures += got != want
             print(f'{"OK  " if got == want else "FAIL"} gold   {name}: {got if got == want else (got, want)}')
+        for name, (malloy, gold_sql, q) in GOLD_3WAY.items():
+            want = db.result_set(gold_sql)
+            got_m, got_y = await run(malloy), db.result_set(compile_semantic(q))
+            ok = got_m == want and got_y == want
+            failures += not ok
+            print(f'{"OK  " if ok else "FAIL"} 3-way  {name}: {want}' + ('' if ok else f'\n  malloy {got_m}\n  yaml   {got_y}'))
         for name, (malloy, q) in YAML_PARITY.items():
             # An all-filtered-out group sums to 0 in Malloy but NULL in plain SQL; same meaning here.
             null_as_0 = lambda rows: [tuple(0 if v is None else v for v in r) for r in rows]  # noqa: E731

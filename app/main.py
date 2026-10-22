@@ -18,6 +18,7 @@ from pydantic import BaseModel, Field  # noqa: E402
 from . import db, malloy_bridge  # noqa: E402
 from .agent import CONTEXTS, GLOSSARY, HARNESS_CAPABILITIES, Context  # noqa: E402
 from .evals import run_eval  # noqa: E402
+from .pricing import PRICES_AS_OF, PRICING  # noqa: E402
 from .semantic import layer  # noqa: E402
 
 STATIC = Path(__file__).resolve().parent.parent / 'static'
@@ -62,6 +63,8 @@ def config() -> dict:
         'glossary': GLOSSARY,
         'malloy_model': malloy_bridge.MODEL_TEXT,
         'contexts': CONTEXTS,
+        'pricing': PRICING,
+        'prices_as_of': PRICES_AS_OF,
         'harness_capabilities': HARNESS_CAPABILITIES,
     }
 

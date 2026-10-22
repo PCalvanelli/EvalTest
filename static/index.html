@@ -5,6 +5,28 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>SQL Eval Playground</title>
   <script src="https://cdn.tailwindcss.com/3.4.17"></script>
+  <style>
+    .viz-root {
+      --surface-1: #fcfcfb; --text-primary: #1f1f1d; --text-secondary: #5f5e58; --text-muted: #8a897f;
+      --grid: #e8e7e2; --frontier: #5f5e58;
+      --series-1: #2a78d6; --series-2: #eb6834; --series-3: #1baf7a;
+      background: var(--surface-1); color: var(--text-primary);
+    }
+    @media (prefers-color-scheme: dark) {
+      :root:where(:not([data-theme="light"])) .viz-root {
+        color-scheme: dark;
+        --surface-1: #1a1a19; --text-primary: #f0efec; --text-secondary: #c3c2b7; --text-muted: #8f8e86;
+        --grid: #2e2e2b; --frontier: #c3c2b7;
+        --series-1: #3987e5; --series-2: #d95926; --series-3: #199e70;
+      }
+    }
+    :root[data-theme="dark"] .viz-root {
+      color-scheme: dark;
+      --surface-1: #1a1a19; --text-primary: #f0efec; --text-secondary: #c3c2b7; --text-muted: #8f8e86;
+      --grid: #2e2e2b; --frontier: #c3c2b7;
+      --series-1: #3987e5; --series-2: #d95926; --series-3: #199e70;
+    }
+  </style>
 </head>
 <body class="bg-slate-50 text-slate-800">
 <div class="max-w-[1500px] mx-auto p-4 lg:p-6">
@@ -78,6 +100,35 @@
         <p class="text-xs text-slate-500">Passed to <code>LLMJudge</code>. A case passes only if the query executes, matches the expected result (when given), and the judge passes it.</p>
       </section>
 
+      <section class="bg-white rounded-xl shadow-sm border p-4 space-y-3">
+        <h2 class="font-medium">Scoring</h2>
+        <p class="text-xs text-slate-500">Expected net value per question = P(correct) × value − P(wrong) × loss − token cost.
+          Changes re-score finished results instantly; nothing is re-run.</p>
+        <div class="grid grid-cols-2 gap-3">
+          <label class="block text-sm">Value of a correct answer ($)
+            <input id="valueCorrect" type="number" min="0" step="0.01" value="1.00" class="score-input mt-1 w-full rounded-md border px-3 py-2 text-sm tabular-nums">
+          </label>
+          <label class="block text-sm">Loss from a wrong answer ($)
+            <input id="lossWrong" type="number" min="0" step="0.01" value="1.00" class="score-input mt-1 w-full rounded-md border px-3 py-2 text-sm tabular-nums">
+          </label>
+        </div>
+        <label class="block text-sm">Rank cells by (★)
+          <select id="rankBy" class="score-input mt-1 w-full rounded-md border px-2 py-2 text-sm">
+            <option value="net_value" selected>Expected net value (accuracy and cost)</option>
+            <option value="pass_k">pass^k (consistent accuracy; pass rate when 1 run)</option>
+            <option value="pass_rate">Mean pass rate (accuracy only)</option>
+          </select>
+        </label>
+        <details>
+          <summary class="text-sm cursor-pointer">Token prices ($ per 1M tokens) <span id="pricesAsOf" class="text-xs text-slate-500"></span></summary>
+          <table class="mt-2 w-full text-xs tabular-nums">
+            <thead><tr class="text-slate-500"><th class="text-left font-medium">Model</th><th class="font-medium">Input</th><th class="font-medium">Output</th><th class="font-medium">Cache read</th><th class="font-medium">Cache write</th></tr></thead>
+            <tbody id="priceRows"></tbody>
+          </table>
+          <p class="mt-1 text-[11px] text-slate-500">Only the agent's tokens are counted. Judge calls are evaluation overhead and identical across cells.</p>
+        </details>
+      </section>
+
       <details class="bg-white rounded-xl shadow-sm border p-4">
         <summary class="font-medium cursor-pointer">Warehouse catalog <span id="tableCount" class="text-xs font-normal text-slate-500"></span></summary>
         <p class="mt-2 text-xs text-slate-500">The raw-SQL agent doesn't get this up front. It discovers tables with <code>list_tables</code> / <code>describe_table</code>.</p>
@@ -111,6 +162,19 @@
         <h2 class="font-medium mb-1">Pass rate by cell</h2>
         <p class="text-xs text-slate-500 mb-3">Click a cell for case-level detail. Time is wall clock for the cell, including queueing behind other cells and judging.</p>
         <div class="overflow-x-auto"><table id="matrix" class="w-full text-sm border-separate border-spacing-1"></table></div>
+      </section>
+      <section id="econWrap" class="hidden viz-root rounded-xl shadow-sm border p-4">
+        <h2 class="font-medium mb-1">Accuracy vs. cost</h2>
+        <p class="text-xs mb-3" style="color: var(--text-secondary)">Each point is a cell. The line is the Pareto frontier: a cell is on it if no
+          other cell is both at least as accurate and no more expensive. Cells below the line are dominated whichever way you weigh accuracy against cost.</p>
+        <div id="econLegend" class="flex flex-wrap gap-x-4 gap-y-1 text-xs mb-2" style="color: var(--text-secondary)"></div>
+        <div id="econChart" class="relative"></div>
+        <details class="mt-3" open>
+          <summary class="text-sm cursor-pointer">Table view &amp; break-even values</summary>
+          <div class="overflow-x-auto mt-2"><table id="econTable" class="w-full text-xs tabular-nums"></table></div>
+          <p class="mt-2 text-[11px]" style="color: var(--text-secondary)">Intervals are 95% cluster-bootstrap intervals (prompts resampled with all their runs, 2,000 draws).
+            "Break-even" is the value of a correct answer above which the next frontier cell's extra accuracy pays for its extra cost: V* = Δcost / Δaccuracy − loss.</p>
+        </details>
       </section>
       <section id="perPromptWrap" class="hidden bg-white rounded-xl shadow-sm border p-4">
         <h2 class="font-medium mb-3">Per prompt</h2>
@@ -178,12 +242,24 @@ const SAMPLE_PROMPTS = [
    expected_sql: "SELECT SUM(i.qty_on_hand - i.qty_reserved) FROM marts.fct_inventory_snapshots i JOIN marts.dim_products p USING (product_id) WHERE i.snapshot_date = '2025-09-30' AND p.category = 'Footwear'"},
   {text: 'How many customers have both placed an order and opened a support ticket?',
    expected_sql: 'SELECT COUNT(DISTINCT o.customer_key) FROM marts.fct_orders o JOIN marts.fct_tickets t USING (customer_key)'},
+  {text: 'What was gross revenue by sales channel in Q2 2025?',
+   expected_sql: "SELECT sales_channel, SUM(subtotal_usd) FROM marts.fct_orders WHERE cancelled_at IS NULL AND order_date BETWEEN '2025-04-01' AND '2025-06-30' GROUP BY 1"},
+  {text: 'How many memberships churned in 2025 so far?',
+   expected_sql: "SELECT COUNT(*) FROM marts.dim_subscriptions WHERE canceled_at >= '2025-01-01' AND canceled_at < '2025-10-01'"},
+  {text: 'What were our top 3 products by units sold in 2025?',
+   expected_sql: "SELECT p.product_name, SUM(l.quantity) FROM marts.fct_order_lines l JOIN marts.fct_orders o USING (order_id) JOIN marts.dim_products p USING (product_id) WHERE o.cancelled_at IS NULL AND l.order_date >= '2025-01-01' GROUP BY 1 ORDER BY 2 DESC LIMIT 3"},
+  // Judge-only: a correct answer can label the two groups many ways (TRUE/FALSE, 'first'/'repeat'), so exact row matching would be unfair.
+  {text: "How does average order value compare between customers' first orders and their repeat orders in 2024?"},
+  {text: 'How many units did each warehouse have on hand at the end of Q2 2025?',
+   expected_sql: "SELECT warehouse_code, SUM(qty_on_hand) FROM marts.fct_inventory_snapshots WHERE snapshot_date = '2025-06-30' GROUP BY 1"},
 ];
 const DEFAULT_RUBRIC = `PASS only if:
 - The query directly answers the question asked (correct grain, filters, time window, and aggregation).
 - Business terms follow the company's definitions: revenue is merchandise only (no shipping/tax), excludes cancelled
   orders, and net revenue deducts refunds; MRR counts subscriptions active at month end with annual plans / 12;
   active customers have a non-cancelled order in the period; first response = first PUBLIC agent reply.
+- Gross revenue is merchandise after discounts, excluding cancelled orders, before refunds; units sold and
+  AOV also exclude cancelled orders; churned memberships are those canceled during the period.
 - It uses current sources (no deprecated tables) and treats inventory snapshots as point-in-time.
 - The returned rows are plausible for the question (not empty unless that is the correct answer).
 FAIL if the query answers a different question, misses a filter, or the explanation contradicts the query.`;
@@ -244,6 +320,14 @@ async function init() {
   $('#catalog').textContent = cfg.semantic_catalog;
   $('#glossary').textContent = cfg.glossary;
   $('#malloyModel').textContent = cfg.malloy_model;
+  PRICING = structuredClone(cfg.pricing);
+  $('#pricesAsOf').textContent = `(list prices as of ${cfg.prices_as_of})`;
+  $('#priceRows').innerHTML = Object.entries(PRICING).map(([id, pr]) => `<tr><td class="pr-2">${esc(modelName(id))}</td>${
+    ['input', 'output', 'cache_read', 'cache_write'].map((k) => `<td><input type="number" min="0" step="0.01" value="${pr[k]}"
+      data-model="${esc(id)}" data-key="${k}" class="price-input w-full rounded border px-1 py-0.5 text-right"></td>`).join('')}</tr>`).join('');
+  $$('.price-input').forEach((el) => el.oninput = () => { PRICING[el.dataset.model][el.dataset.key] = Math.max(0, +el.value || 0); rescore(); });
+  $$('.score-input').forEach((el) => el.oninput = rescore);
+  window.addEventListener('resize', () => renderEconomics());
   $('#contextHelp').innerHTML = CONTEXTS.map((c) => `<span class="block"><b class="font-medium">${esc(c.name)}:</b> ${esc(cfg.contexts[c.id])}</span>`).join('');
   $('#harnessList').innerHTML = Object.entries(cfg.harness_capabilities).map(([k, desc]) => `
     <label class="flex items-start gap-2"><input type="checkbox" class="mt-1 harness-cap" value="${esc(k)}" checked>
@@ -330,6 +414,7 @@ function handleEvent(ev) {
   else if (ev.type === 'cell_error') state.errors[ev.id] = `Run ${ev.run}: ${ev.error}`;
   else return;
   renderMatrix();
+  renderEconomics();
   renderPerPrompt();
   if (ev.type !== 'cell') return;
   if (!state.selected) selectCell(ev.report.id);
@@ -367,7 +452,7 @@ function consistency(rs) {
 }
 
 // What "best" means: with repeats, consistent accuracy (pass^k); with one run, the pass rate.
-const score = (a) => (state.repeats > 1 ? a.pass_k : a.pass_rate);
+
 
 function showStatus(msg, kind) {
   const el = $('#status');
@@ -391,12 +476,13 @@ function planDims() {
 
 function renderMatrix() {
   const {models, combos} = planDims();
-  const best = Math.max(0, ...state.cells.map((c) => { const a = aggregate(c.id); return a ? score(a) : 0; }));
+  const econ = econAll();
+  const best = Math.max(...state.cells.map((c) => scoreOf(c.id, econ)));
   const head = `<tr><th></th>${combos.map((c) =>
     `<th class="text-xs font-medium text-slate-500 px-2 pb-1 text-left">${comboLabel(c)}</th>`).join('')}</tr>`;
   const rows = models.map((m) => `<tr>
     <th class="text-left font-medium pr-3 whitespace-nowrap">${esc(modelName(m))}</th>
-    ${combos.map((c) => renderCell(cellId(m, c.harness, c.context), best)).join('')}
+    ${combos.map((c) => renderCell(cellId(m, c.harness, c.context), best, econ)).join('')}
   </tr>`).join('');
   $('#matrix').innerHTML = head + rows;
   $('#matrixWrap').classList.remove('hidden');
@@ -405,7 +491,7 @@ function renderMatrix() {
 
 const spinner = '<span class="inline-block w-3 h-3 rounded-full border-2 border-slate-300 border-t-indigo-500 animate-spin"></span>';
 
-function renderCell(id, best) {
+function renderCell(id, best, econ) {
   const a = aggregate(id);
   const ring = state.selected === id ? 'ring-2 ring-indigo-500' : '';
   const err = state.errors[id] ? `<div class="mt-1 text-[11px] text-red-700 break-words">${esc(state.errors[id])}</div>` : '';
@@ -414,7 +500,9 @@ function renderCell(id, best) {
       : `<td><div class="rounded-lg border border-dashed p-3 text-slate-400 text-xs flex items-center gap-2 min-h-[84px]">${spinner}running…</div></td>`;
   }
   const multi = state.repeats > 1;
-  const star = score(a) === best && best > 0 ? ` <span title="Best ${multi ? 'pass^k' : 'pass rate'}">★</span>` : '';
+  const e = econ[id];
+  const star = isFinite(best) && scoreOf(id, econ) === best ? ` <span title="Best ${rankLabel()}">★</span>` : '';
+  const money = e ? `<div class="text-xs tabular-nums text-slate-700">${fmtUSD(e.c)}/q · net ${fmtUSD(e.u, true)}/q</div>` : '';
   const range = multi && a.n > 1 ? ` <span class="text-xs font-normal text-slate-600" title="Min–max pass rate across runs">${pct(a.min)}–${pct(a.max)}</span>` : '';
   const runs = multi ? `<div class="text-xs tabular-nums mt-0.5"><b title="Share of prompts that passed in every run">pass^k ${pct(a.pass_k)}</b>` +
     `${a.flaky.length ? ` · <span class="text-amber-700">${a.flaky.length} flaky</span>` : ''}</div>` +
@@ -423,7 +511,7 @@ function renderCell(id, best) {
   return `<td><button type="button" data-cell="${esc(id)}" class="w-full text-left rounded-lg border p-3 hover:shadow ${ring}" style="background:${passTint(a.pass_rate)}">
     <div class="text-xl font-semibold tabular-nums">${pct(a.pass_rate)}${star}${counts}${range}</div>
     <div class="text-xs text-slate-600 tabular-nums">${fmtS(a.seconds)} · ${Math.round(a.tokens).toLocaleString()} tok · ${+a.tool_calls.toFixed(1)} tools</div>
-    ${runs}${err}
+    ${money}${runs}${err}
   </button></td>`;
 }
 
@@ -454,7 +542,7 @@ function selectCell(id, run = null) {
   if (!rs.length) { $('#detail').innerHTML = ''; return; }
   const r = rs.find((x) => x.run === run) ?? rs[rs.length - 1];
   state.selectedRun = r.run;
-  $('#detail').innerHTML = (state.repeats > 1 ? renderRunSummary(id, rs, r.run) : '') + renderReport(r);
+  $('#detail').innerHTML = renderEconSummary(id) + (state.repeats > 1 ? renderRunSummary(id, rs, r.run) : '') + renderReport(r);
   $$('#detail [data-run]').forEach((b) => b.onclick = () => selectCell(id, +b.dataset.run));
 }
 
@@ -551,6 +639,247 @@ function renderRows({columns, rows, row_count}) {
     </table>
     ${row_count > rows.length ? `<p class="text-[11px] text-slate-400 mt-1">Showing ${rows.length} of ${row_count} rows</p>` : ''}
   </div>`;
+}
+
+// ─────────────── Economics: expected net value, bootstrap intervals, Pareto frontier ───────────────
+// Per question, with p = P(correct) and c = expected agent token cost in $:
+//   U = p·V − (1 − p)·L − c        (V = value of a correct answer, L = loss from a wrong one)
+// Uncertainty: cluster bootstrap over prompts (each draw keeps all runs of a resampled prompt). Every cell
+// uses the SAME resampled prompt indices, so cell-vs-cell differences are paired.
+let PRICING = {};
+const BOOT = 2000;
+const scoring = () => ({
+  V: Math.max(0, +$('#valueCorrect').value || 0),
+  L: Math.max(0, +$('#lossWrong').value || 0),
+  rankBy: $('#rankBy').value,
+});
+
+function caseCost(c, model) {
+  const p = PRICING[model];
+  if (!p) return NaN;  // unknown model price: cost can't be computed
+  if (c.input_tokens == null) return 0;  // failed before any model call was billed
+  const read = c.cache_read_tokens || 0, write = c.cache_write_tokens || 0;
+  const fresh = Math.max(0, c.input_tokens - read - write);  // input_tokens includes cached tokens
+  return (fresh * p.input + read * p.cache_read + write * p.cache_write + (c.output_tokens || 0) * p.output) / 1e6;
+}
+
+// Seeded RNG so intervals stay put between re-renders.
+function mulberry32(seed) {
+  return () => {
+    seed = (seed + 0x6D2B79F5) | 0;
+    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+const bootCache = {};
+function bootIndices(n) {
+  if (!bootCache[n]) {
+    const rnd = mulberry32(42);
+    bootCache[n] = Array.from({length: BOOT}, () => Array.from({length: n}, () => Math.floor(rnd() * n)));
+  }
+  return bootCache[n];
+}
+function quantile(xs, q) {
+  const v = [...xs].sort((a, b) => a - b);
+  const i = (v.length - 1) * q, lo = Math.floor(i);
+  return v[lo] + (v[Math.ceil(i)] - v[lo]) * (i - lo);
+}
+const utility = (p, c, {V, L}) => p * V - (1 - p) * L - c;
+
+function economics(id) {
+  const cell = state.cells.find((c) => c.id === id);
+  const rs = reportsFor(id);
+  if (!cell || !rs.length) return null;
+  // Per-prompt means over finished runs: the resampling unit.
+  const ps = state.prompts.map((_, i) => {
+    const cases = rs.map((r) => r.cases[i]).filter(Boolean);
+    return {p: mean(cases.map((c) => (c.passed ? 1 : 0))), c: mean(cases.map((c) => caseCost(c, cell.model)))};
+  });
+  const s = scoring();
+  const p = mean(ps.map((x) => x.p)), c = mean(ps.map((x) => x.c));
+  const boots = bootIndices(ps.length).map((idx) => {
+    const bp = mean(idx.map((i) => ps[i].p)), bc = mean(idx.map((i) => ps[i].c));
+    return {p: bp, u: utility(bp, bc, s)};
+  });
+  return {
+    id, cell, p, c, u: utility(p, c, s),
+    costPerCorrect: p > 0 ? c / p : Infinity,
+    pCI: [quantile(boots.map((b) => b.p), 0.025), quantile(boots.map((b) => b.p), 0.975)],
+    uCI: [quantile(boots.map((b) => b.u), 0.025), quantile(boots.map((b) => b.u), 0.975)],
+    boots,
+  };
+}
+
+// Paired bootstrap difference in net value, a − b.
+function pairedDiff(a, b) {
+  const d = a.boots.map((x, k) => x.u - b.boots[k].u);
+  return {mean: a.u - b.u, ci: [quantile(d, 0.025), quantile(d, 0.975)], pBetter: mean(d.map((x) => (x > 0 ? 1 : 0)))};
+}
+
+function econAll() {
+  const out = {};
+  for (const c of state.cells) { const e = economics(c.id); if (e) out[c.id] = e; }
+  return out;
+}
+
+// Non-dominated cells: no other cell is at least as accurate AND no more expensive (one strictly).
+function paretoFrontier(econ) {
+  const pts = Object.values(econ).filter((e) => isFinite(e.c));
+  return pts.filter((a) => !pts.some((b) => b !== a && b.p >= a.p && b.c <= a.c && (b.p > a.p || b.c < a.c)))
+    .sort((a, b) => a.c - b.c || a.p - b.p);
+}
+
+// What "best" means for the ★ and the ranking.
+function scoreOf(id, econ) {
+  const a = aggregate(id), e = econ[id];
+  if (!a) return -Infinity;
+  const {rankBy} = scoring();
+  if (rankBy === 'net_value') return e && isFinite(e.u) ? e.u : -Infinity;
+  if (rankBy === 'pass_k') return state.repeats > 1 ? a.pass_k : a.pass_rate;
+  return a.pass_rate;
+}
+const rankLabel = () => ({net_value: 'expected net value', pass_k: state.repeats > 1 ? 'pass^k' : 'pass rate', pass_rate: 'mean pass rate'})[scoring().rankBy];
+
+function fmtUSD(v, signed = false) {
+  if (!isFinite(v)) return '—';
+  const sign = v < 0 ? '−' : signed && v > 0 ? '+' : '';
+  const a = Math.abs(v);
+  return sign + '$' + (a >= 0.01 ? a.toFixed(2) : a === 0 ? '0' : a.toPrecision(2));
+}
+const cellName = (cell) => `${modelName(cell.model)} · ${comboLabel({harness: cell.harness_on, context: cell.context})}`;
+const modelSlot = (model) => Math.max(0, MODELS.findIndex((m) => m.id === model)) + 1;  // fixed: color follows the model
+
+function renderEconomics() {
+  const econ = econAll();
+  const all = Object.values(econ);
+  if (!all.length) return;
+  $('#econWrap').classList.remove('hidden');
+  const frontier = paretoFrontier(econ);
+  const onFrontier = new Set(frontier.map((e) => e.id));
+  renderEconChart(all, frontier, onFrontier);
+  renderEconTable(econ, frontier, onFrontier);
+}
+
+function renderEconChart(all, frontier, onFrontier) {
+  const box = $('#econChart');
+  const W = Math.max(320, box.clientWidth || 640), H = 320, m = {l: 48, r: 16, t: 12, b: 40};
+  const pts = all.filter((e) => isFinite(e.c));
+  const models = [...new Set(state.cells.map((c) => c.model))];
+  $('#econLegend').innerHTML = models.map((id) =>
+    `<span class="inline-flex items-center gap-1.5"><svg width="10" height="10"><circle cx="5" cy="5" r="4" fill="var(--series-${modelSlot(id)})"/></svg>${esc(modelName(id))}</span>`).join('') +
+    `<span class="inline-flex items-center gap-1.5"><svg width="10" height="10"><circle cx="5" cy="5" r="4" fill="var(--text-secondary)"/></svg>harness on</span>` +
+    `<span class="inline-flex items-center gap-1.5"><svg width="10" height="10"><circle cx="5" cy="5" r="3.5" fill="none" stroke="var(--text-secondary)" stroke-width="1.5"/></svg>harness off</span>` +
+    `<span class="inline-flex items-center gap-1.5"><svg width="16" height="10"><path d="M0 5H16" stroke="var(--frontier)" stroke-width="2"/></svg>Pareto frontier</span>`;
+  if (!pts.length) { box.innerHTML = '<p class="text-xs">No priced cells yet.</p>'; return; }
+
+  // x: cost per question on a log scale (models differ ~40× in price); y: accuracy 0–100%.
+  const positive = pts.map((e) => e.c).filter((c) => c > 0);
+  let lo = positive.length ? Math.min(...positive) / 1.6 : 1e-4, hi = positive.length ? Math.max(...positive) * 1.6 : 1e-2;
+  if (hi / lo < 10) { const mid = Math.sqrt(lo * hi); lo = mid / Math.sqrt(10); hi = mid * Math.sqrt(10); }
+  const lx = (c) => Math.log10(Math.max(c, lo));
+  const X = (c) => m.l + ((lx(c) - Math.log10(lo)) / (Math.log10(hi) - Math.log10(lo))) * (W - m.l - m.r);
+  const Y = (p) => m.t + (1 - p) * (H - m.t - m.b);
+
+  const xticks = [];
+  for (let d = Math.floor(Math.log10(lo)); d <= Math.ceil(Math.log10(hi)); d++)
+    for (const k of [1, 2, 5]) { const v = k * 10 ** d; if (v >= lo && v <= hi) xticks.push(v); }
+  const grid = [0, 0.25, 0.5, 0.75, 1].map((p) =>
+    `<line x1="${m.l}" x2="${W - m.r}" y1="${Y(p)}" y2="${Y(p)}" stroke="var(--grid)" stroke-width="1"/>
+     <text x="${m.l - 6}" y="${Y(p) + 4}" text-anchor="end" font-size="11" fill="var(--text-muted)">${p * 100}%</text>`).join('') +
+    xticks.map((v) => `<line x1="${X(v)}" x2="${X(v)}" y1="${m.t}" y2="${H - m.b}" stroke="var(--grid)" stroke-width="1"/>
+     <text x="${X(v)}" y="${H - m.b + 16}" text-anchor="middle" font-size="11" fill="var(--text-muted)">${fmtUSD(v)}</text>`).join('') +
+    `<text x="${(m.l + W - m.r) / 2}" y="${H - 6}" text-anchor="middle" font-size="11" fill="var(--text-secondary)">Agent token cost per question (log scale)</text>`;
+
+  // Staircase frontier: between two frontier costs, the best attainable accuracy is the cheaper point's.
+  let path = '';
+  frontier.forEach((e, k) => {
+    path += k === 0 ? `M${X(e.c)},${Y(e.p)}` : `H${X(e.c)}V${Y(e.p)}`;
+  });
+  const line = frontier.length > 1 ? `<path d="${path}" fill="none" stroke="var(--frontier)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>` : '';
+
+  const marks = pts.map((e) => {
+    const col = `var(--series-${modelSlot(e.cell.model)})`, x = X(e.c), y = Y(e.p);
+    const mark = e.cell.harness_on
+      ? `<circle cx="${x}" cy="${y}" r="5" fill="${col}"/>`
+      : `<circle cx="${x}" cy="${y}" r="4" fill="var(--surface-1)" stroke="${col}" stroke-width="2"/>`;
+    const label = onFrontier.has(e.id)
+      ? `<text x="${x + 9}" y="${y - 8}" font-size="11" fill="var(--text-secondary)">${esc(CONTEXT_SHORT[e.cell.context])}${e.cell.harness_on ? ' + harness' : ''}</text>` : '';
+    return `<g><circle cx="${x}" cy="${y}" r="7" fill="var(--surface-1)"/>${mark}${label}
+      <circle cx="${x}" cy="${y}" r="12" fill="transparent" class="cursor-pointer" data-econ="${esc(e.id)}"/></g>`;
+  }).join('');
+
+  box.innerHTML = `<svg width="${W}" height="${H}" role="img" aria-label="Accuracy versus agent token cost per question, one point per cell">${grid}${line}${marks}</svg>
+    <div id="econTip" class="hidden absolute pointer-events-none rounded-md border px-2.5 py-1.5 text-xs shadow-sm" style="background: var(--surface-1); color: var(--text-primary)"></div>`;
+  const tip = $('#econTip');
+  const econ = Object.fromEntries(pts.map((e) => [e.id, e]));
+  $$('#econChart [data-econ]').forEach((el) => {
+    const e = econ[el.dataset.econ];
+    el.onmouseenter = () => {
+      const a = aggregate(e.id);
+      tip.innerHTML = `<b>${esc(cellName(e.cell))}</b><br>Accuracy ${pct(e.p)} (95% CI ${pct(e.pCI[0])}–${pct(e.pCI[1])})` +
+        `${state.repeats > 1 ? ` · pass^k ${pct(a.pass_k)}` : ''}<br>Cost ${fmtUSD(e.c)}/question · ${fmtUSD(e.costPerCorrect)}/correct<br>Net value ${fmtUSD(e.u, true)}/question`;
+      tip.classList.remove('hidden');
+      const x = +el.getAttribute('cx'), y = +el.getAttribute('cy');
+      tip.style.left = `${Math.min(x + 14, W - 230)}px`; tip.style.top = `${Math.max(0, y - 20)}px`;
+    };
+    el.onmouseleave = () => tip.classList.add('hidden');
+    el.onclick = () => selectCell(e.id);
+  });
+}
+
+function renderEconTable(econ, frontier, onFrontier) {
+  const {L} = scoring();
+  const rows = Object.values(econ).sort((a, b) => scoreOf(b.id, econ) - scoreOf(a.id, econ));
+  const leader = rows[0];
+  const next = Object.fromEntries(frontier.slice(0, -1).map((e, k) => [e.id, frontier[k + 1]]));
+  const breakEven = (a, b) => {
+    const v = (b.c - a.c) / (b.p - a.p) - L;
+    return v <= 0 ? 'any value' : fmtUSD(v);
+  };
+  $('#econTable').innerHTML = `<thead><tr class="text-left" style="color: var(--text-secondary)">
+      <th class="font-medium py-1 pr-3">Cell</th><th class="font-medium pr-3">Accuracy (95% CI)</th>${state.repeats > 1 ? '<th class="font-medium pr-3">pass^k</th>' : ''}
+      <th class="font-medium pr-3">$ / question</th><th class="font-medium pr-3">$ / correct</th><th class="font-medium pr-3">Net value (95% CI)</th>
+      <th class="font-medium pr-3">vs. top (paired)</th><th class="font-medium">Frontier · break-even to next</th></tr></thead>
+    <tbody>${rows.map((e) => {
+      const d = e === leader ? null : pairedDiff(e, leader);
+      const nxt = next[e.id];
+      return `<tr class="border-t" style="border-color: var(--grid)">
+        <td class="py-1 pr-3 whitespace-nowrap">${esc(cellName(e.cell))}</td>
+        <td class="pr-3">${pct(e.p)} <span style="color: var(--text-muted)">${pct(e.pCI[0])}–${pct(e.pCI[1])}</span></td>
+        ${state.repeats > 1 ? `<td class="pr-3">${pct(aggregate(e.id).pass_k)}</td>` : ''}
+        <td class="pr-3">${fmtUSD(e.c)}</td><td class="pr-3">${fmtUSD(e.costPerCorrect)}</td>
+        <td class="pr-3">${fmtUSD(e.u, true)} <span style="color: var(--text-muted)">${fmtUSD(e.uCI[0], true)} to ${fmtUSD(e.uCI[1], true)}</span></td>
+        <td class="pr-3 whitespace-nowrap">${d ? `${fmtUSD(d.mean, true)} <span style="color: var(--text-muted)">(${fmtUSD(d.ci[0], true)} to ${fmtUSD(d.ci[1], true)}) · P(better) ${pct(d.pBetter)}</span>` : 'top'}</td>
+        <td class="whitespace-nowrap">${onFrontier.has(e.id) ? `✓${nxt ? ` · upgrade to ${esc(cellName(nxt.cell))} if a correct answer is worth > ${breakEven(e, nxt)}` : ''}` : '<span style="color: var(--text-muted)">dominated</span>'}</td>
+      </tr>`;
+    }).join('')}</tbody>`;
+}
+
+function renderEconSummary(id) {
+  const econ = econAll(), e = econ[id];
+  if (!e) return '';
+  const ranked = Object.values(econ).sort((x, y) => scoreOf(y.id, econ) - scoreOf(x.id, econ));
+  const d = ranked[0] && ranked[0] !== e ? pairedDiff(e, ranked[0]) : null;
+  const frontier = paretoFrontier(econ).some((f) => f.id === id);
+  return `
+  <section class="bg-white rounded-xl shadow-sm border p-4 mb-4">
+    <p class="text-xs uppercase tracking-wide text-slate-400 mb-2">Cost &amp; value · ${frontier ? 'on the Pareto frontier' : 'dominated by another cell'}</p>
+    <div class="grid grid-cols-2 md:grid-cols-5 gap-2">
+      ${stat('$ / question', fmtUSD(e.c))}
+      ${stat('$ / correct answer', fmtUSD(e.costPerCorrect))}
+      ${stat('Net value / question', `${fmtUSD(e.u, true)} <span class="block text-xs font-normal text-slate-500">95% CI ${fmtUSD(e.uCI[0], true)} to ${fmtUSD(e.uCI[1], true)}</span>`)}
+      ${stat('Accuracy', `${pct(e.p)} <span class="block text-xs font-normal text-slate-500">95% CI ${pct(e.pCI[0])}–${pct(e.pCI[1])}</span>`)}
+      ${d ? stat('vs. top cell', `${fmtUSD(d.mean, true)} <span class="block text-xs font-normal text-slate-500">P(better) ${pct(d.pBetter)}</span>`) : stat('Rank', 'top')}
+    </div>
+  </section>`;
+}
+
+function rescore() {
+  if (!state.cells.length) return;
+  renderMatrix();
+  renderEconomics();
+  if (state.selected) selectCell(state.selected, state.selectedRun);
 }
 
 init();
