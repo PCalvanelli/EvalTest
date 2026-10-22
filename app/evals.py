@@ -5,13 +5,14 @@ from __future__ import annotations
 import asyncio
 import time
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
+import mlflow
 from pydantic_ai.messages import ToolCallPart
 from pydantic_evals import Case, Dataset
 from pydantic_evals.evaluators import Evaluator, EvaluatorContext, LLMJudge
 
-from . import db
+from . import db, tracking
 from .agent import Context, MalloyAnswer, SemanticAnswer, answer_sql, build_agent, make_model
 
 
@@ -38,6 +39,28 @@ class ResultMatches(Evaluator):
             return {'ResultMatches': False}
 
 
+@dataclass
+class TracedLLMJudge(LLMJudge):
+    """LLMJudge whose calls are traced to the cell's MLflow run. Reports under the plain LLMJudge name."""
+
+    run_id: str | None = None
+
+    @classmethod
+    def get_serialization_name(cls) -> str:
+        return 'LLMJudge'
+
+    async def evaluate(self, ctx: EvaluatorContext):
+        # The judge sees the same output it always has: the trace id is bookkeeping, not part of the answer.
+        ctx = replace(ctx, output={k: v for k, v in ctx.output.items() if k != 'trace_id'})
+        with tracking.span(self.run_id, f'judge {ctx.name}', tracking.SpanType.EVALUATOR, {'case': ctx.name}) as span:
+            if span is not None:
+                mlflow.update_current_trace(tags={'kind': 'judge', 'case': ctx.name})
+            verdict = await super().evaluate(ctx)
+            if span is not None:
+                span.set_outputs(verdict)
+            return verdict
+
+
 async def run_eval(
     *,
     label: str,
@@ -50,8 +73,17 @@ async def run_eval(
     harness: Sequence[str],
     context: Context,
     limiter: asyncio.Semaphore,
+    mlflow_run_id: str | None = None,
 ) -> dict:
     async def task(prompt: str) -> dict:
+        # One MLflow trace per case: the agent, model and tool spans nest under this root span.
+        with tracking.span(mlflow_run_id, label, tracking.SpanType.AGENT, {'prompt': prompt}) as span:
+            output = await run_case(prompt)
+            if span is not None:
+                span.set_outputs({k: output[k] for k in ('sql', 'semantic_query', 'malloy_query', 'rows', 'error')})
+        return {**output, 'trace_id': span.trace_id if span is not None else None}
+
+    async def run_case(prompt: str) -> dict:
         # Fresh agent per case so capability state never leaks. The limiter is shared by every
         # cell in the matrix, so `seconds` is measured after acquiring it (excludes queueing).
         agent = build_agent(model, api_key, harness, workspace_id, context)
@@ -95,7 +127,7 @@ async def run_eval(
             Case(name=f'q{i + 1}', inputs=p['text'], expected_output=p.get('expected_sql') or None)
             for i, p in enumerate(prompts)
         ],
-        evaluators=[ExecutesOK(), ResultMatches(), LLMJudge(rubric=rubric, model=judge, include_input=True)],
+        evaluators=[ExecutesOK(), ResultMatches(), TracedLLMJudge(rubric=rubric, model=judge, include_input=True, run_id=mlflow_run_id)],
     )
 
     start = time.perf_counter()
@@ -122,6 +154,7 @@ async def run_eval(
             'passed': bool(checks) and all(v['passed'] for v in checks.values()),
             'seconds': c.output['seconds'],
             'total_seconds': c.total_duration,
+            'trace_id': c.output['trace_id'],
             **usage,
         })
     for f in report.failures:  # task crashed outside our try/except

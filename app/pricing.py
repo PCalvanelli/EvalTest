@@ -13,3 +13,14 @@ PRICING: dict[str, dict[str, float]] = {
     'claude-sonnet-5-5': {'input': 2.00, 'output': 10.00, 'cache_read': 0.20, 'cache_write': 2.50},
     'claude-haiku-5-5': {'input': 0.10, 'output': 0.50, 'cache_read': 0.01, 'cache_write': 0.125},
 }
+
+
+def case_cost(case: dict, model: str) -> float:
+    """List-price USD cost of one case's token usage; mirrors caseCost() in static/index.html."""
+    p = PRICING.get(model)
+    if p is None or case.get('input_tokens') is None:
+        return 0.0
+    read, write = case.get('cache_read_tokens') or 0, case.get('cache_write_tokens') or 0
+    fresh = max(0, case['input_tokens'] - read - write)  # input_tokens includes cached tokens
+    return (fresh * p['input'] + read * p['cache_read'] + write * p['cache_write']
+            + (case.get('output_tokens') or 0) * p['output']) / 1e6

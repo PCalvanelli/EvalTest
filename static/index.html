@@ -106,10 +106,10 @@
           Changes re-score finished results instantly; nothing is re-run.</p>
         <div class="grid grid-cols-2 gap-3">
           <label class="block text-sm">Value of a correct answer ($)
-            <input id="valueCorrect" type="number" min="0" step="0.01" value="1.00" class="score-input mt-1 w-full rounded-md border px-3 py-2 text-sm tabular-nums">
+            <input id="valueCorrect" type="number" min="0" step="any" value="1.00" class="score-input mt-1 w-full rounded-md border px-3 py-2 text-sm tabular-nums">
           </label>
           <label class="block text-sm">Loss from a wrong answer ($)
-            <input id="lossWrong" type="number" min="0" step="0.01" value="1.00" class="score-input mt-1 w-full rounded-md border px-3 py-2 text-sm tabular-nums">
+            <input id="lossWrong" type="number" min="0" step="any" value="1.00" class="score-input mt-1 w-full rounded-md border px-3 py-2 text-sm tabular-nums">
           </label>
         </div>
         <label class="block text-sm">Rank cells by (★)
@@ -159,7 +159,11 @@
     <main class="min-w-0 space-y-6">
       <div id="status" class="hidden rounded-lg border bg-white p-3 text-sm"></div>
       <section id="matrixWrap" class="hidden bg-white rounded-xl shadow-sm border p-4">
-        <h2 class="font-medium mb-1">Pass rate by cell</h2>
+        <div class="flex items-baseline justify-between gap-3 mb-1">
+          <h2 class="font-medium">Pass rate by cell</h2>
+          <a id="mlflowLink" target="_blank" rel="noopener" class="hidden text-xs text-indigo-600 hover:underline whitespace-nowrap"
+            title="Parent run for this matrix: params, prompts, rubric and a per-cell summary">Matrix in MLflow ↗</a>
+        </div>
         <p class="text-xs text-slate-500 mb-3">Click a cell for case-level detail. Time is wall clock for the cell, including queueing behind other cells and judging.</p>
         <div class="overflow-x-auto"><table id="matrix" class="w-full text-sm border-separate border-spacing-1"></table></div>
       </section>
@@ -323,7 +327,7 @@ async function init() {
   PRICING = structuredClone(cfg.pricing);
   $('#pricesAsOf').textContent = `(list prices as of ${cfg.prices_as_of})`;
   $('#priceRows').innerHTML = Object.entries(PRICING).map(([id, pr]) => `<tr><td class="pr-2">${esc(modelName(id))}</td>${
-    ['input', 'output', 'cache_read', 'cache_write'].map((k) => `<td><input type="number" min="0" step="0.01" value="${pr[k]}"
+    ['input', 'output', 'cache_read', 'cache_write'].map((k) => `<td><input type="number" min="0" step="any" value="${pr[k]}"
       data-model="${esc(id)}" data-key="${k}" class="price-input w-full rounded border px-1 py-0.5 text-right"></td>`).join('')}</tr>`).join('');
   $$('.price-input').forEach((el) => el.oninput = () => { PRICING[el.dataset.model][el.dataset.key] = Math.max(0, +el.value || 0); rescore(); });
   $$('.score-input').forEach((el) => el.oninput = rescore);
@@ -334,6 +338,14 @@ async function init() {
       <span>${esc(desc)}</span></label>`).join('');
   updateCount();
 }
+
+// A browser-blocked submit is otherwise silent when the bad field sits in a collapsed section: open it and say why.
+$('#form').addEventListener('invalid', (e) => {
+  const el = e.target;
+  el.closest('details')?.setAttribute('open', '');
+  const name = el.labels?.[0]?.textContent.trim().split('\n')[0] || el.dataset.key || el.id || 'a field';
+  showStatus(`Can't run yet: ${name} — ${el.validationMessage}`, 'error');
+}, true);
 
 $('#form').onsubmit = async (e) => {
   e.preventDefault();
@@ -408,7 +420,11 @@ async function readNdjson(res, onEvent) {
 }
 
 function handleEvent(ev) {
-  if (ev.type === 'plan') { state.cells = ev.cells; state.repeats = ev.repeats; }
+  if (ev.type === 'plan') {
+    state.cells = ev.cells; state.repeats = ev.repeats; state.mlflow = ev.mlflow;
+    $('#mlflowLink').classList.toggle('hidden', !ev.mlflow);
+    if (ev.mlflow) $('#mlflowLink').href = ev.mlflow.matrix;
+  }
   else if (ev.type === 'run_start') state.currentRun = ev.run;
   else if (ev.type === 'cell') (state.runs[ev.run] ??= {})[ev.report.id] = ev.report;
   else if (ev.type === 'cell_error') state.errors[ev.id] = `Run ${ev.run}: ${ev.error}`;
@@ -577,6 +593,8 @@ function renderReport(r) {
   <section class="bg-white rounded-xl shadow-sm border p-4 min-w-0">
     <div class="flex items-baseline justify-between mb-1">
       <h2 class="text-lg font-semibold">${esc(modelName(r.model))} · ${comboLabel({harness: r.harness_on, context: r.context})}${state.repeats > 1 ? ` · run ${r.run}` : ''}</h2>
+      ${state.mlflow?.cells[r.id] ? `<a href="${esc(state.mlflow.cells[r.id])}" target="_blank" rel="noopener"
+        class="text-xs text-indigo-600 hover:underline whitespace-nowrap" title="All runs of this cell: metrics by run, traces with eval feedback, cases.json">Open in MLflow ↗</a>` : ''}
     </div>
     ${r.harness.length ? `<p class="text-xs text-slate-500 mb-3">Capabilities: ${r.harness.map(esc).join(', ')}</p>` : '<div class="mb-3"></div>'}
     <div class="grid grid-cols-3 md:grid-cols-6 gap-2 mb-4">
@@ -600,7 +618,8 @@ function renderCase(c, context) {
     <li class="flex gap-2"><span>${v.passed ? '✅' : '❌'}</span><span><b class="font-medium">${esc(name)}</b>${v.reason ? ` — <span class="text-slate-600">${esc(v.reason)}</span>` : ''}</span></li>`).join('');
   const meta = c.seconds != null
     ? `${fmtS(c.seconds)} · ${((c.input_tokens || 0) + (c.output_tokens || 0)).toLocaleString()} tok · ${c.requests ?? 0} req · ${c.tool_calls ?? 0} tool calls` +
-      (context === 'glossary_search' ? ` · ${c.glossary_searches ?? 0} glossary searches` : '')
+      (context === 'glossary_search' ? ` · ${c.glossary_searches ?? 0} glossary searches` : '') +
+      (c.trace_id ? ` · <span title="MLflow trace ID">trace ${esc(c.trace_id)}</span>` : '')
     : '';
   return `
   <article class="rounded-lg border ${c.passed ? 'border-emerald-200' : 'border-red-200'} p-3 min-w-0">

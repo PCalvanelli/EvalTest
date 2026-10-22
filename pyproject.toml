@@ -12,6 +12,7 @@ dependencies = [
     "pydantic-evals",
     "pydantic-ai-harness",
     "pyyaml",
+    "mlflow>=3.17.2",
 ]
 
 [tool.uv]

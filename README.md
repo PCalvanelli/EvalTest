@@ -87,7 +87,7 @@ The ★ ranking can be switched between net value, pass^k and mean pass rate.
 ```bash
 uv sync
 (cd malloy && npm ci)        # Malloy compiler sidecar (Node 18+), needed for the Malloy context
-uv run uvicorn app.main:app --reload
+uv run uvicorn app.main:app --reload --reload-dir app --reload-dir static
 # open http://localhost:8000
 ```
 
@@ -97,6 +97,32 @@ The API key goes to the server once per request. It isn't stored, unless you tic
 
 The database file is `data/warehouse-<hash>.duckdb`. Its name changes whenever the build SQL changes, which triggers an automatic rebuild.
 `uv run python -m app.db` rebuilds it and lists the tables. `uv run python -m app.semantic.layer` compiles and runs sample semantic queries.
+
+## MLflow
+
+Every matrix is also recorded in MLflow, so results outlive the browser tab. To browse them:
+
+```bash
+uv run mlflow ui --backend-store-uri sqlite:///data/mlflow.db --port 5000
+# open http://127.0.0.1:5000, experiment "text-to-sql-evals"
+```
+
+The two UIs split the work. This page launches matrices and compares cells live: the grid, per-prompt k/N, cost and the Pareto frontier.
+MLflow keeps the history and is where you investigate:
+
+- **One parent run per matrix**, holding the parameters, `prompts.json`, `rubric.md` and `summary.json`.
+- **One child run per cell.** Each repeat logs pass rate, tokens, time and cost at step = run number. When the matrix finishes, the cell logs
+  `pass_k`, `mean_pass_rate`, `flaky_prompts` and `mean_cost_per_question_usd`. Use MLflow's run comparison to chart these across matrices.
+- **One trace per case**, linked to its cell's run, with the agent, model and tool spans. The eval checks (`ExecutesOK`, `ResultMatches`,
+  `LLMJudge`, `passed`) are attached as feedback. Judge calls get their own traces (tag `kind=judge`). Add your own labels to traces in
+  MLflow's UI to check how often the judge agrees with you.
+
+The page links to the matrix run above the grid and to each cell's run in its detail header. MLflow's cost metrics use list prices from
+`app/pricing.py`; prices edited in the page apply to the page only.
+
+Settings (environment variables): `MLFLOW_TRACKING_URI` to use a tracking server instead of `data/mlflow.db`, `MLFLOW_UI_URL` if the UI isn't
+at `http://127.0.0.1:5000`, `MLFLOW_EXPERIMENT_NAME`, and `EVAL_MLFLOW=off` to disable tracking. A tracking failure is logged and never
+fails an eval. The API key is never logged.
 
 ## Files
 
@@ -108,5 +134,6 @@ The database file is `data/warehouse-<hash>.duckdb`. Its name changes whenever t
 - `app/malloy_bridge.py`, `malloy/compile.mjs`: Malloy → SQL compilation via the Node sidecar (schema-only in-memory DuckDB)
 - `app/agent.py`: agent factory (raw / glossary / glossary search / semantic / Malloy) and the harness capability set
 - `app/evals.py`: Pydantic Evals dataset, evaluators, report summary
+- `app/tracking.py`: MLflow runs, traces and feedback for each matrix
 - `app/main.py`: FastAPI routes (`/`, `/api/config`, and `/api/run`, which streams NDJSON)
 - `static/index.html`: Tailwind UI

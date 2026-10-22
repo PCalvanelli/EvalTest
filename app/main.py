@@ -10,12 +10,13 @@ from collections.abc import AsyncIterator
 from pathlib import Path
 
 os.environ.setdefault('PYDANTIC_AI_NO_BANNER', '1')
+os.environ.setdefault('MLFLOW_DISABLE_AGENT_HINT', '1')  # MLflow logs a coding-assistant hint on import otherwise
 
 from fastapi import FastAPI, HTTPException  # noqa: E402
 from fastapi.responses import FileResponse, StreamingResponse  # noqa: E402
 from pydantic import BaseModel, Field  # noqa: E402
 
-from . import db, malloy_bridge  # noqa: E402
+from . import db, malloy_bridge, tracking  # noqa: E402
 from .agent import CONTEXTS, GLOSSARY, HARNESS_CAPABILITIES, Context  # noqa: E402
 from .evals import run_eval  # noqa: E402
 from .pricing import PRICES_AS_OF, PRICING  # noqa: E402
@@ -66,6 +67,7 @@ def config() -> dict:
         'pricing': PRICING,
         'prices_as_of': PRICES_AS_OF,
         'harness_capabilities': HARNESS_CAPABILITIES,
+        'mlflow': {'enabled': tracking.ENABLED, 'ui_url': tracking.UI_URL},
     }
 
 
@@ -86,6 +88,19 @@ async def run(req: RunRequest) -> StreamingResponse:
     ]
     limiter = asyncio.Semaphore(MAX_CONCURRENT_AGENT_RUNS)
     workspace_id = (req.workspace_id or '').strip() or None
+    tracker = await asyncio.to_thread(
+        tracking.MatrixTracker.start,
+        cells=cells,
+        prompts=prompts,
+        rubric=req.rubric,
+        params={'models': ','.join(dict.fromkeys(req.models)),
+                'harness_modes': ','.join('on' if h else 'off' for h in dict.fromkeys(req.harness_modes)),
+                'contexts': ','.join(dict.fromkeys(req.context_modes)),
+                'harness_capabilities': ','.join(req.harness) or 'none',
+                'judge_model': req.judge_model, 'repeats': req.repeats, 'prompts': len(prompts)},
+        harness=req.harness,
+        judge_model=req.judge_model,
+    )
 
     async def run_cell(cell: dict, run_no: int) -> dict:
         try:
@@ -100,17 +115,31 @@ async def run(req: RunRequest) -> StreamingResponse:
                 harness=req.harness if cell['harness_on'] else [],
                 context=cell['context'],
                 limiter=limiter,
+                mlflow_run_id=tracker.cell_runs[cell['id']] if tracker else None,
             )
-            return {'type': 'cell', 'run': run_no, 'report': {**report, 'id': cell['id'], 'run': run_no}}
         except Exception as e:
-            return {'type': 'cell_error', 'run': run_no, 'id': cell['id'], 'error': f'{type(e).__name__}: {e}'}
+            error = f'{type(e).__name__}: {e}'
+            if tracker:
+                await asyncio.to_thread(tracker.log_cell_error, cell['id'], run_no, error)
+            return {'type': 'cell_error', 'run': run_no, 'id': cell['id'], 'error': error}
+        if tracker:
+            await asyncio.to_thread(tracker.log_cell, cell['id'], run_no, report)
+        return {'type': 'cell', 'run': run_no, 'report': {**report, 'id': cell['id'], 'run': run_no}}
 
     async def stream() -> AsyncIterator[str]:
-        yield json.dumps({'type': 'plan', 'cells': cells, 'prompts': len(prompts), 'repeats': req.repeats}) + '\n'
-        for run_no in range(1, req.repeats + 1):
-            yield json.dumps({'type': 'run_start', 'run': run_no}) + '\n'
-            for next_done in asyncio.as_completed([run_cell(c, run_no) for c in cells]):
-                yield json.dumps(await next_done, default=str) + '\n'
+        mlflow_urls = tracker.urls() if tracker else None
+        yield json.dumps({'type': 'plan', 'cells': cells, 'prompts': len(prompts), 'repeats': req.repeats,
+                          'mlflow': mlflow_urls}) + '\n'
+        status = 'KILLED'  # stays KILLED if the client disconnects mid-matrix
+        try:
+            for run_no in range(1, req.repeats + 1):
+                yield json.dumps({'type': 'run_start', 'run': run_no}) + '\n'
+                for next_done in asyncio.as_completed([run_cell(c, run_no) for c in cells]):
+                    yield json.dumps(await next_done, default=str) + '\n'
+            status = 'FINISHED'
+        finally:
+            if tracker:
+                await asyncio.shield(asyncio.to_thread(tracker.finish, status))
         yield json.dumps({'type': 'done'}) + '\n'
 
     return StreamingResponse(stream(), media_type='application/x-ndjson')
