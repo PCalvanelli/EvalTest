@@ -1,6 +1,6 @@
 // History tab: every matrix in the MLflow store. Open one in the Run view, or compare cells across matrices.
 
-import {$, $$, esc, pct, fmtUSD, fmtDate, empty, loading, errorBox, passTint} from './ui.js';
+import {$, $$, esc, pct, fmtUSD, fmtDate, fmtDur, empty, loading, errorBox, passTint} from './ui.js';
 import {modelName, CONTEXT_SHORT} from './config.js';
 import {getJSON} from './api.js';
 import {go} from './router.js';
@@ -49,7 +49,7 @@ function draw() {
       <table class="data-table w-full text-sm">
         <thead><tr>
           <th class="w-8"><span class="sr-only">Compare</span></th><th>When</th><th>Models</th><th>Context × harness</th>
-          <th class="!text-right">Prompts × runs</th><th>Best cell (pass^k · mean)</th><th>Status</th><th></th>
+          <th class="!text-right">Prompts × runs</th><th class="!text-right">Duration</th><th>Best cell (pass^k · mean)</th><th>Status</th><th></th>
         </tr></thead>
         <tbody>${matrices.map(row).join('')}</tbody>
       </table>
@@ -77,6 +77,7 @@ function row(m) {
     <td>${esc(d.models)}</td>
     <td class="max-w-[320px]">${esc(d.contexts)}<span class="block text-xs text-ink-muted">${esc(d.harness)}</span></td>
     <td class="text-right tabular-nums">${esc(m.params.prompts ?? '—')} × ${esc(m.params.repeats ?? 1)}</td>
+    <td class="whitespace-nowrap text-right tabular-nums">${m.seconds != null ? esc(fmtDur(m.seconds)) : m.status === 'RUNNING' ? `${esc(fmtDur((Date.now() - m.start_time) / 1000))} so far` : '—'}</td>
     <td>${best ? `<span class="font-medium">${esc(cellLabel(best.id))}</span><span class="block text-xs tabular-nums text-ink-muted">${pct(best.metrics.pass_k)} · ${pct(best.metrics.mean_pass_rate)}</span>` : '<span class="text-ink-subtle">—</span>'}</td>
     <td class="whitespace-nowrap ${m.status === 'FINISHED' ? '' : 'text-warning'}">${esc(statusText[m.status] ?? m.status)}</td>
     <td class="whitespace-nowrap text-right">
@@ -84,7 +85,7 @@ function row(m) {
       <button type="button" data-load="${esc(m.id)}" class="btn btn-outline px-2 py-1 text-xs">Open</button>
     </td>
   </tr>
-  ${open ? `<tr><td></td><td colspan="7" class="!pt-0">${cellsTable(m)}</td></tr>` : ''}`;
+  ${open ? `<tr><td></td><td colspan="8" class="!pt-0">${cellsTable(m)}</td></tr>` : ''}`;
 }
 
 function cellsTable(m) {

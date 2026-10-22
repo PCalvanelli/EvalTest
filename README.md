@@ -56,15 +56,24 @@ Other deliberate traps:
       the question can't be expressed. It sends problems back at most twice.
     - **Output check**: the final query must run and return data.
     - **Tool guardrail**.
+    - **Cite the run**: every query result has a run number, and the agent finishes with `answer(run, explanation)`
+      instead of rewriting the query. It can send the query and `answer` in the same response (the query runs first),
+      so a straightforward question takes one model turn plus the review.
+    - **Answer checklist**: the reviewer's fit checks (columns, rows, fields, explanation) are given to the agent up
+      front, so the first answer usually passes review instead of costing a round trip.
+    - **Lean tool results**: no generated SQL in tool results, at most 20 rows, and a repeated query points at its
+      earlier run.
     - Every step is bounded, so a case always ends with an answer on record. Reviewer tokens count toward the case's
       cost.
   - **Raw SQL**:
     - **Deprecation lint**: tables documented as `DEPRECATED` are flagged in `run_sql` and, once, in the final query.
     - **Column documentation**: the reviewer sees the warehouse's own documentation for every column the final query
       uses.
-  - **dbt MetricFlow**: **`define_metric`**. When no governed metric fits, the agent defines a derived (with
-    `offset_window` for prior periods), cumulative (rolling `window` or `grain_to_date`) or ratio (filtered) metric from
-    governed metrics.
+  - **dbt MetricFlow**: **`define`** in `query_metrics`. When no governed metric fits, the agent defines a derived
+    (with `offset_window` for prior periods), cumulative (rolling `window` or `grain_to_date`) or ratio (filtered)
+    metric from governed metrics, in the same call that queries it.
+    - **Compact catalog**: the same catalog with each entity's dimensions described once (the customer dimensions
+      otherwise repeat under five metric groups): about 2.3k tokens instead of 3.7k, on every request.
     - MetricFlow validates the metric in-process against a per-question copy of the semantic manifest, and the
       definitions travel with the final answer.
     - New semantic models or dimensions are out of scope: they would mean writing SQL.
@@ -74,6 +83,21 @@ Other deliberate traps:
   - Off by default (they added tokens without helping): `SystemReminders`, `Planning`, `RepairToolArguments`.
 
   Judge harness vs no harness with **Runs ≥ 3**. With 22 prompts, a single prompt is a 4.5-point swing.
+
+  **Token budget.** Most of a case's tokens are the instructions, catalog and tool schemas, re-sent on every model
+  turn (prompt caching makes them cheaper, not fewer). So the harness saves tokens by taking fewer turns and sending a
+  smaller prompt. Sonnet 5.5 on the 22-question benchmark, harness on, 3 runs (`uv run python -m app.bench --runs 3`):
+
+  | Target | Before (tokens / pass) | Now, per run (tokens / pass) |
+  |---|---|---|
+  | dbt MetricFlow | 974k / 21 of 22 | 255k–278k / 21 of 22 every run |
+  | Malloy | 670k / 20 of 22 | 359k–366k / 21 of 22 every run |
+
+  The remaining miss is q20 in both: the agents count revenue with no known customer in "total net revenue", and the
+  reference doesn't. On the held-out set (1 run): MetricFlow 9/10 at 142k tokens, Malloy 10/10 at 235k.
+  Raw SQL (1 run) went from 877k to 616k tokens at 12/22: most of its misses are business definitions (net revenue on
+  `total_usd`, uncapped refunds), which the harness deliberately doesn't supply.
+  `app.bench` runs cells from the command line and records them in MLflow like the UI does.
 
 ## Benchmark sets and the ceiling
 
@@ -132,7 +156,7 @@ The API key goes to the server once per request. It isn't stored, unless you tic
 The database file is `data/warehouse-<hash>.duckdb`. Its name changes whenever the build SQL changes, which triggers an automatic rebuild.
 `uv run python -m app.db` rebuilds it and lists the tables. `uv run python -m app.semantic.layer` compiles and runs sample semantic queries.
 
-## The app: Run, History, Traces, Labels
+## The app: Run, History, Traces, Labels, Harness
 
 Everything runs on the one server. Every matrix is recorded in MLflow (a local SQLite store, `data/mlflow.db`), and the app reads it back:
 
@@ -147,6 +171,10 @@ Everything runs on the one server. Every matrix is recorded in MLflow (a local S
   agreement with you, Cohen's κ and a confusion matrix, plus the list of answers where a check disagrees with you. Low agreement means the
   grid's pass rates can't be trusted yet.
 - **MLflow ↗** (top right) opens MLflow's own UI, served by the same server at `/mlflow`, for anything the app doesn't cover.
+- **Harness** (read only): for each target (raw SQL, MetricFlow, Malloy), with the default harness or none, the components that are on,
+  the instructions split into parts with the component that added each, the tool definitions the model receives, what happens to each
+  query, and the checks on the final answer in order. The server builds the real agent and captures its first model request
+  (`app/harness_view.py`, no API call), so the page always matches what runs.
 
 What MLflow stores, per matrix:
 
@@ -182,7 +210,8 @@ Tailwind colors. Chart series colors were validated for color-vision deficiency 
 - `app/tracking.py`: MLflow runs, traces and feedback for each matrix
 - `app/history.py`: read API over the MLflow store (`/api/matrices`, `/api/traces`, `/api/labels`) and labeling
 - `app/mlflow_ui.py`: MLflow's own UI mounted at `/mlflow`
-- `app/main.py`: FastAPI routes (`/`, `/api/config`, and `/api/run`, which streams NDJSON)
+- `app/main.py`: FastAPI routes (`/`, `/api/config`, `/api/harness/{context}`, and `/api/run`, which streams NDJSON)
+- `app/harness_view.py`: the read-only description of a target's agent behind the Harness tab
 - `static/index.html`: page shell, Tailwind token mapping and components; `static/css/tokens.css`: design tokens
-- `static/js/`: ES modules, no build step. `app.js` (entry), `router.js`, `run.js`, `results.js`, `econ.js`, `history.js`, `traces.js`,
+- `static/js/`: ES modules, no build step. `app.js` (entry), `router.js`, `run.js`, `results.js`, `econ.js`, `history.js`, `harness.js`, `traces.js`,
   `labels.js`, `ui.js`, `api.js`, `config.js`

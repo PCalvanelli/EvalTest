@@ -119,6 +119,9 @@ export const modelSlot = (model) => Math.max(0, MODELS.findIndex((m) => m.id ===
 // The results being shown on the Run tab: a live matrix, or one loaded from History.
 //   cells: [{id, model, harness_on, context, run_id?}], runs: {runNo: {cellId: report}}, errors: {cellId: msg}
 //   mlflow: {matrix_id, matrix, cells: {cellId: url}, cell_runs: {cellId: runId}} when tracked
+//   runSeconds: {runNo: wall-clock seconds}, runStartedAt: {runNo: Date.now()} for live runs,
+//   startedAt / totalSeconds: the whole matrix (live start time, or the finished total)
 export const freshState = (extra = {}) => ({cells: [], repeats: 1, currentRun: 0, runs: {}, errors: {}, prompts: [],
-  selected: null, selectedRun: null, mlflow: null, loadedFrom: null, ...extra});
+  selected: null, selectedRun: null, mlflow: null, loadedFrom: null, runSeconds: {}, runStartedAt: {}, startedAt: null,
+  totalSeconds: null, ...extra});
 export const app = {state: freshState(), pricing: {}, config: null};

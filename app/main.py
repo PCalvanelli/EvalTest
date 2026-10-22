@@ -6,6 +6,7 @@ import asyncio
 import itertools
 import json
 import os
+import time
 from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Literal
@@ -18,7 +19,7 @@ from fastapi.responses import FileResponse, StreamingResponse  # noqa: E402
 from fastapi.staticfiles import StaticFiles  # noqa: E402
 from pydantic import BaseModel, Field  # noqa: E402
 
-from . import db, history, malloy_bridge, metricflow_bridge, mlflow_ui, tracking  # noqa: E402
+from . import db, harness_view, history, malloy_bridge, metricflow_bridge, mlflow_ui, tracking  # noqa: E402
 from .agent import CONTEXTS, HARNESS_CAPABILITIES, TARGET_NAMES, Context  # noqa: E402
 from .evals import run_eval  # noqa: E402
 from .pricing import PRICES_AS_OF, PRICING  # noqa: E402
@@ -82,6 +83,13 @@ def config() -> dict:
         'harness_targets': TARGET_NAMES,
         'mlflow': {'enabled': tracking.ENABLED, 'embedded': _MLFLOW_APP is not None, 'ui_url': tracking.UI_URL},
     }
+
+
+@app.get('/api/harness/{context}')
+async def harness(context: Context, mode: Literal['on', 'off'] = 'on') -> dict:
+    """Read-only: what one target's agent sees with the default harness, or with none."""
+    return await harness_view.describe(
+        context, [k for k, v in HARNESS_CAPABILITIES.items() if v['default']] if mode == 'on' else [])
 
 
 @app.post('/api/run')
@@ -148,8 +156,13 @@ async def run(req: RunRequest) -> StreamingResponse:
         try:
             for run_no in range(1, req.repeats + 1):
                 yield json.dumps({'type': 'run_start', 'run': run_no}) + '\n'
+                started = time.perf_counter()
                 for next_done in asyncio.as_completed([run_cell(c, run_no) for c in cells]):
                     yield json.dumps(await next_done, default=str) + '\n'
+                seconds = time.perf_counter() - started  # wall clock for the whole run: every cell, judging included
+                if tracker:
+                    await asyncio.to_thread(tracker.log_run_time, run_no, seconds)
+                yield json.dumps({'type': 'run_end', 'run': run_no, 'seconds': seconds}) + '\n'
             status = 'FINISHED'
         finally:
             if tracker:

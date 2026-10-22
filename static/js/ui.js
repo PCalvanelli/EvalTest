@@ -13,6 +13,13 @@ export const store = {
 
 export const mean = (xs) => xs.reduce((a, b) => a + b, 0) / Math.max(xs.length, 1);
 export const fmtS = (s) => (s ?? 0).toFixed(1) + 's';
+// Wall-clock durations: 42s, 4m 05s, 1h 03m.
+export function fmtDur(s) {
+  if (s == null || !isFinite(s)) return '—';
+  const t = Math.round(s), h = Math.floor(t / 3600), m = Math.floor((t % 3600) / 60), sec = t % 60;
+  const pad = (n) => String(n).padStart(2, '0');
+  return h ? `${h}h ${pad(m)}m` : m ? `${m}m ${pad(sec)}s` : `${sec}s`;
+}
 export const fmtMs = (ms) => (ms == null ? '—' : ms >= 1000 ? (ms / 1000).toFixed(2) + 's' : Math.round(ms) + 'ms');
 export const pct = (x) => (x == null || !isFinite(x) ? '—' : Math.round(x * 100) + '%');
 export const fmtInt = (n) => (n == null ? '—' : Math.round(n).toLocaleString());

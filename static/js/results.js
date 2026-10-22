@@ -1,7 +1,7 @@
 // Run tab results: the matrix grid, per-prompt table, and cell / case detail. Works the same for a live
 // matrix and one loaded from History (both fill app.state).
 
-import {$, $$, esc, mean, fmtS, pct, fmtUSD, passTint, spinner, stat, passBadge, checkLine} from './ui.js';
+import {$, $$, esc, mean, fmtS, fmtDur, pct, fmtUSD, passTint, spinner, stat, passBadge, checkLine} from './ui.js';
 import {app, COMBOS, cellId, modelName, comboLabel} from './config.js';
 import {econAll, scoreOf, rankLabel, renderEconomics, renderEconSummary} from './econ.js';
 import {openTraceDrawer} from './traces.js';
@@ -47,12 +47,30 @@ const matrixId = () => app.state.mlflow?.matrix_id;
 const cellRunId = (id) => app.state.mlflow?.cell_runs?.[id];
 const tracesHref = (params) => '#/traces?' + new URLSearchParams(Object.entries(params).filter(([, v]) => v));
 
+/** Wall clock per run and for the whole matrix: finished runs show their time, the current one counts up. */
+export function renderRunTimes() {
+  const {state} = app;
+  const el = $('#runTimes');
+  if (!el) return;
+  const live = (start) => (Date.now() - start) / 1000;
+  const runs = Array.from({length: state.repeats}, (_, i) => i + 1).map((n) => {
+    if (state.runSeconds[n] != null) return `Run ${n}: <span class="font-medium text-ink">${fmtDur(state.runSeconds[n])}</span>`;
+    if (state.runStartedAt[n] && state.totalSeconds == null) return `Run ${n}: <span class="font-medium text-ink">${fmtDur(live(state.runStartedAt[n]))}</span> (running)`;
+    return state.loadedFrom ? null : `<span class="text-ink-subtle">Run ${n}: not started</span>`;
+  }).filter(Boolean);
+  const total = state.totalSeconds ?? (state.startedAt ? live(state.startedAt) : null);
+  const parts = [...(state.repeats > 1 ? runs : []), total != null ? `Total: <span class="font-medium text-ink">${fmtDur(total)}</span>${state.totalSeconds == null ? ' (running)' : ''}` : null].filter(Boolean);
+  el.innerHTML = parts.join('<span aria-hidden="true" class="mx-2 text-ink-subtle">·</span>');
+  el.classList.toggle('hidden', !parts.length);
+}
+
 /** Re-render everything that depends on app.state (after an event, a load, or a scoring change). */
 export function renderAll() {
   const {state} = app;
   if (!state.cells.length) return;
   $('#empty').classList.add('hidden');
   renderMatrix();
+  renderRunTimes();
   renderEconomics();
   renderPerPrompt();
   if (state.selected) selectCell(state.selected, state.selectedRun);

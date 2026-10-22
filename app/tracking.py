@@ -180,6 +180,14 @@ class MatrixTracker:
             mlflow.log_feedback(trace_id=trace_id, name='passed', value=c['passed'],
                                 source=AssessmentSource('CODE', 'all_checks'))
 
+    def log_run_time(self, run_no: int, seconds: float) -> None:
+        """Wall-clock seconds for one run of the whole matrix, on the parent run at step = run number."""
+        try:
+            with _lock:
+                self.client.log_metric(self.parent_id, 'run_seconds', seconds, int(time.time() * 1000), run_no)
+        except Exception:
+            _log.exception('MLflow: could not log the time of run %s', run_no)
+
     def log_cell_error(self, cell_id: str, run_no: int, error: str) -> None:
         try:
             with _lock:
