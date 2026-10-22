@@ -1,7 +1,7 @@
 // Run tab: the matrix form, the streaming run, and loading a past matrix (from History) into the results view.
 
 import {$, $$, esc, store, fmtDate} from './ui.js';
-import {app, freshState, MODELS, CONTEXTS, SAMPLE_PROMPTS, DEFAULT_RUBRIC, modelName} from './config.js';
+import {app, freshState, MODELS, CONTEXTS, SAMPLE_PROMPTS, PROMPT_SETS, DEFAULT_RUBRIC, modelName} from './config.js';
 import {postJSON, readNdjson} from './api.js';
 import {renderAll, selectCell} from './results.js';
 import {renderEconomics, rescore} from './econ.js';
@@ -54,6 +54,7 @@ function addPrompt(p = {}) {
   const node = $('#promptTpl').content.firstElementChild.cloneNode(true);
   node.querySelector('.p-text').value = p.text || '';
   node.querySelector('.p-sql').value = p.expected_sql || '';
+  node.dataset.match = p.match || 'rows';  // how ResultMatches compares; set by the sample sets, kept on edit
   node.querySelector('.p-remove').onclick = () => { node.remove(); renumber(); updateCount(); };
   node.querySelector('.p-text').oninput = updateCount;
   $('#prompts').appendChild(node);
@@ -65,7 +66,8 @@ const renumber = () => $$('.prompt-row .p-num').forEach((el, i) => { el.textCont
 
 function readPrompts() {
   return $$('.prompt-row')
-    .map((r) => ({text: r.querySelector('.p-text').value.trim(), expected_sql: r.querySelector('.p-sql').value.trim() || null}))
+    .map((r) => ({text: r.querySelector('.p-text').value.trim(), expected_sql: r.querySelector('.p-sql').value.trim() || null,
+      match: r.dataset.match || 'rows'}))
     .filter((p) => p.text);
 }
 
@@ -103,7 +105,7 @@ export function initRun(cfg) {
   $('#modelChoices').innerHTML = MODELS.map((m) => chip('model', m.id, m.name, m.checked)).join('');
   $('#harnessChoices').innerHTML = chip('harness', 'false', 'Off', true) + chip('harness', 'true', 'On', true);
   contextChips(cfg);
-  $('#judgeModel').innerHTML = MODELS.map((m) => `<option value="${m.id}" ${m.id === 'claude-haiku-5-5' ? 'selected' : ''}>${m.name}</option>`).join('');
+  $('#judgeModel').innerHTML = MODELS.map((m) => `<option value="${m.id}" ${m.id === 'claude-sonnet-5-5' ? 'selected' : ''}>${m.name}</option>`).join('');
   $$('input[name=model], input[name=harness], input[name=context]').forEach((i) => i.onchange = updateCount);
   $('#repeats').oninput = updateCount;
 
@@ -113,6 +115,11 @@ export function initRun(cfg) {
   if (saved) { $('#apiKey').value = saved; $('#rememberKey').checked = true; }
   $('#workspaceId').value = store.get('workspaceId') || '';
   $('#addPrompt').onclick = () => addPrompt();
+  // Swap in a sample set; the prompt list is replaced, so the choice is explicit rather than on every page load.
+  $('#promptSet').onchange = (e) => {
+    $('#prompts').innerHTML = '';
+    PROMPT_SETS[e.target.value].forEach(addPrompt);
+  };
 
   $('#schema').textContent = cfg.schema;
   $('#tableCount').textContent = `(${cfg.table_count} tables)`;

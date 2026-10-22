@@ -152,7 +152,14 @@
     <section id="panel-prompts" class="subpanel pt-5" role="tabpanel" hidden>
       <div class="mb-3 flex flex-wrap items-baseline justify-between gap-2">
         <p class="hint max-w-[72ch]">Questions in plain language. Expected SQL is optional: when given, a case also has to return the same rows.</p>
-        <button type="button" id="addPrompt" class="btn btn-outline">Add prompt</button>
+        <div class="flex flex-wrap items-center gap-2">
+          <label class="flex items-center gap-2 text-sm text-ink-muted">Sample set
+            <select id="promptSet" class="input mt-0 w-auto py-1.5">
+              <option value="benchmark">Benchmark (22)</option>
+              <option value="holdout">Held-out (10)</option>
+            </select></label>
+          <button type="button" id="addPrompt" class="btn btn-outline">Add prompt</button>
+        </div>
       </div>
       <div class="hidden grid-cols-[2rem_minmax(0,2fr)_minmax(0,3fr)_2.25rem] gap-3 px-3 pb-1.5 text-xs font-medium text-ink-muted md:grid">
         <span></span><span>Question</span><span>Expected SQL</span><span></span>

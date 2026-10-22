@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import hashlib
+import itertools
+import math
 import re
+from decimal import Decimal
 from pathlib import Path
 
 import duckdb
@@ -137,6 +140,66 @@ def result_set(sql: str) -> list[tuple]:
     data = run_readonly(sql, max_rows=10_000)
     return sorted((tuple(map(_normalize, r)) for r in data['rows']), key=repr)
 
+
+REL_TOL = 0.005  # numbers within 0.5% of each other match
+
+
+def _raw_rows(sql: str) -> list[tuple]:
+    """Every row of a read-only query, unrounded (Decimals as floats), for comparing results."""
+    stripped = sql.strip().rstrip(';').strip()
+    if not _READ_ONLY_START.match(stripped) or ';' in stripped:
+        raise ValueError('Only a single SELECT or WITH query is allowed.')
+    rows = connection().cursor().execute(stripped).fetchmany(10_000)
+    return [tuple(float(v) if isinstance(v, Decimal) else v for v in r) for r in rows]
+
+
+def _is_number(v: object) -> bool:
+    return isinstance(v, (int, float)) and not isinstance(v, bool)
+
+
+def _cells_equal(a: object, b: object) -> bool:
+    if _is_number(a) and _is_number(b):
+        return math.isclose(a, b, rel_tol=REL_TOL, abs_tol=1e-9)
+    if a is None or b is None:
+        return a is None and b is None
+    return _normalize(str(a) if not isinstance(a, (str, bool)) else a) == _normalize(str(b) if not isinstance(b, (str, bool)) else b)
+
+
+def _same_rows(actual: list[tuple], expected: list[tuple]) -> bool:
+    """Row multisets equal, cell by cell with numeric tolerance (greedy pairing; rows are rarely near-duplicates)."""
+    if len(actual) != len(expected):
+        return False
+    unused = list(actual)
+    for row in expected:
+        hit = next((i for i, cand in enumerate(unused) if all(_cells_equal(x, y) for x, y in zip(cand, row))), None)
+        if hit is None:
+            return False
+        unused.pop(hit)
+    return True
+
+
+def _numeric_columns(rows: list[tuple]) -> list[tuple]:
+    """Keep only the columns that hold numbers (labels, names, dates and flags dropped)."""
+    if not rows:
+        return rows
+    keep = [i for i in range(len(rows[0])) if all(r[i] is None or _is_number(r[i]) for r in rows)
+            and any(_is_number(r[i]) for r in rows)]
+    return [tuple(r[i] for i in keep) for r in rows]
+
+
+def results_match(actual_sql: str, expected_sql: str, mode: str = 'rows') -> bool:
+    """Same rows as the expected query, ignoring row and column order (Spider-style execution match), with numbers
+    equal within REL_TOL. Extra or missing columns still fail. mode='numbers' compares only the numeric columns,
+    for questions whose labels can legitimately vary (TRUE/FALSE vs 'first'/'repeat')."""
+    actual, expected = _raw_rows(actual_sql), _raw_rows(expected_sql)
+    if mode == 'numbers':
+        actual, expected = _numeric_columns(actual), _numeric_columns(expected)
+    if not actual or not expected:
+        return not actual and not expected
+    if len(actual[0]) != len(expected[0]):
+        return False
+    perms = itertools.permutations(range(len(actual[0]))) if len(actual[0]) <= 6 else [tuple(range(len(actual[0])))]
+    return any(_same_rows([tuple(r[i] for i in perm) for r in actual], expected) for perm in perms)
 
 def _normalize(v: object) -> object:
     if isinstance(v, float):

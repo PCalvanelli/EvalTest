@@ -25,7 +25,7 @@ class ExecutesOK(Evaluator):
 
 @dataclass
 class ResultMatches(Evaluator):
-    """When an expected SQL is given, the result sets match (order-insensitive)."""
+    """When an expected SQL is given, the result sets match (row and column order ignored)."""
 
     def evaluate(self, ctx: EvaluatorContext) -> dict:
         if not ctx.expected_output:
@@ -33,9 +33,28 @@ class ResultMatches(Evaluator):
         if ctx.output['error'] is not None:
             return {'ResultMatches': False}
         try:
-            return {'ResultMatches': db.result_set(ctx.output['sql']) == db.result_set(ctx.expected_output)}
+            expected = ctx.expected_output
+            return {'ResultMatches': db.results_match(ctx.output['sql'], expected['sql'], expected.get('match', 'rows'))}
         except Exception:
             return {'ResultMatches': False}
+
+
+# With a verified reference answer, correctness is settled by the reference: the judge checks that the answer agrees
+# with it (allowing presentation differences) and that the explanation is honest. The company rubric is context only,
+# so the judge doesn't re-derive definitions the reference already encodes.
+REFERENCE_JUDGE_RUBRIC = """\
+You grade a data analyst's answer to a business question against a verified reference result (the expected output:
+its SQL, row count and first rows). PASS only if both hold:
+1. The answer's rows agree with the reference. Allow presentation differences: column order and names, labels for
+   the same groups (TRUE/FALSE vs 'first'/'repeat'), number formatting and small rounding, date formats. A different
+   number, a missing or extra group or column, or a different grain is a disagreement.
+2. The explanation accurately describes what the query does: no claimed filter, exclusion or definition the query
+   doesn't apply.
+The output shows the agent's first rows and its total row_count. Where the answer agrees with the reference, do not
+fail it on your own reading of the company definitions below: the reference already encodes them.
+
+Company definitions, for context:
+{rubric}"""
 
 
 @dataclass
@@ -96,7 +115,7 @@ async def run_eval(
             try:
                 result = await agent.run(prompt)
             except Exception as e:
-                return {'sql': None, 'metricflow_query': None, 'malloy_query': None, 'explanation': None, 'rows': None,
+                return {'sql': None, 'metricflow_query': None, 'malloy_query': None, 'explanation': None, 'rows': None, 'row_count': None,
                         'error': f'{type(e).__name__}: {e}', 'seconds': time.perf_counter() - start, 'usage': None}
             seconds = time.perf_counter() - start
         answer = result.output
@@ -107,9 +126,10 @@ async def run_eval(
         malloy_query = answer.malloy if isinstance(answer, MalloyAnswer) else None
         try:
             sql = await answer_sql(answer)
-            rows, error = db.run_readonly(sql, max_rows=10), None
+            ran = db.run_readonly(sql, max_rows=10)
+            rows, row_count, error = ran['rows'], ran['row_count'], None
         except Exception as e:
-            sql, rows, error = getattr(answer, 'sql', None), None, str(e)
+            sql, rows, row_count, error = getattr(answer, 'sql', None), None, None, str(e)
         u, r = result.usage, log.reviewer_usage  # reviewer calls are part of the case's cost
         return {
             'sql': sql,
@@ -117,6 +137,7 @@ async def run_eval(
             'malloy_query': malloy_query,
             'explanation': answer.explanation,
             'rows': rows,
+            'row_count': row_count,  # rows holds at most the first 10
             'error': error,
             'seconds': seconds,
             'usage': {'input_tokens': u.input_tokens + r.get('input_tokens', 0),
@@ -129,14 +150,21 @@ async def run_eval(
         }
 
     judge = make_model(judge_model, api_key, workspace_id)
-    dataset = Dataset(
-        name=label,
-        cases=[
-            Case(name=f'q{i + 1}', inputs=p['text'], expected_output=p.get('expected_sql') or None)
-            for i, p in enumerate(prompts)
-        ],
-        evaluators=[ExecutesOK(), ResultMatches(), TracedLLMJudge(rubric=rubric, model=judge, include_input=True, run_id=mlflow_run_id, trace_tags=trace_tags)],
-    )
+
+    def case(i: int, p: dict) -> Case:
+        """A case with the judge that fits it: graded against the reference when there is one, else on the rubric."""
+        reference = None
+        if p.get('expected_sql'):
+            ref = db.run_readonly(p['expected_sql'], max_rows=20)
+            reference = {'sql': p['expected_sql'], 'match': p.get('match', 'rows'), 'row_count': ref['row_count'],
+                         'columns': ref['columns'], 'rows': ref['rows']}
+        judge_rubric = REFERENCE_JUDGE_RUBRIC.format(rubric=rubric) if reference else rubric
+        return Case(name=f'q{i + 1}', inputs=p['text'], expected_output=reference, evaluators=[
+            TracedLLMJudge(rubric=judge_rubric, model=judge, include_input=True, include_expected_output=reference is not None,
+                           run_id=mlflow_run_id, trace_tags=trace_tags)])
+
+    dataset = Dataset(name=label, cases=[case(i, p) for i, p in enumerate(prompts)],
+                      evaluators=[ExecutesOK(), ResultMatches()])
 
     start = time.perf_counter()
     report = await dataset.evaluate(task, name=label, progress=False)
@@ -151,7 +179,7 @@ async def run_eval(
         cases.append({
             'name': c.name,
             'prompt': c.inputs,
-            'expected_sql': c.expected_output,
+            'expected_sql': (c.expected_output or {}).get('sql'),
             'sql': c.output['sql'],
             'metricflow_query': c.output['metricflow_query'],
             'malloy_query': c.output['malloy_query'],
@@ -188,6 +216,12 @@ async def run_eval(
         'reviews': sum(c.get('reviews', 0) for c in cases),
         'sent_back': sum(c.get('sent_back', 0) for c in cases),
         'defined_metrics': sum(c.get('defined_metrics', 0) for c in cases),
+        # The two graders, reported separately: when they disagree it's usually the question or the grading.
+        'rows_match': sum(c['checks'].get('ResultMatches', {}).get('passed', False) for c in cases),
+        'rows_checked': sum('ResultMatches' in c['checks'] for c in cases),
+        'judge_pass': sum(c['checks'].get('LLMJudge', {}).get('passed', False) for c in cases),
+        'graders_disagree': sum('ResultMatches' in c['checks'] and 'LLMJudge' in c['checks']
+                                and c['checks']['ResultMatches']['passed'] != c['checks']['LLMJudge']['passed'] for c in cases),
         'lint_retries': sum(len(c.get('lints') or []) for c in cases),
         'cache_read_tokens': sum(c.get('cache_read_tokens', 0) for c in cases),
         'input_tokens': sum(c.get('input_tokens', 0) for c in cases),

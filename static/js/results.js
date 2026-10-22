@@ -181,6 +181,7 @@ function renderReport(r) {
     ${r.harness?.length ? `<p class="hint mb-3">Capabilities: ${r.harness.map(esc).join(', ')}</p>` : '<div class="mb-3"></div>'}
     <div class="mb-4 grid grid-cols-3 gap-2 md:grid-cols-6">
       ${stat('Pass rate', `${pct(r.pass_rate)} <span class="text-sm font-normal text-ink-muted">(${r.passed}/${r.total})</span>`)}
+      ${r.rows_checked != null ? stat('Rows match · judge', `${r.rows_match}/${r.rows_checked} · ${r.judge_pass}/${r.total}${r.graders_disagree ? ` <span class="text-sm font-normal text-warning">(${r.graders_disagree} disagree)</span>` : ''}`) : ''}
       ${stat('Cell time', fmtS(r.total_seconds))}
       ${stat('Avg / prompt', fmtS(r.avg_case_seconds))}
       ${stat('Tokens', `${(r.total_tokens ?? 0).toLocaleString()}${r.cache_read_tokens ? ` <span class="text-sm font-normal text-ink-muted">(${pct(r.cache_read_tokens / Math.max(r.input_tokens, 1))} of input cached)</span>` : ''}`)}

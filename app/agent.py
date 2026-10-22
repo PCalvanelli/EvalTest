@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from typing import Literal
 
 from anthropic import AsyncAnthropic
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, create_model
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
@@ -20,7 +20,7 @@ from pydantic_ai_harness.repair_tool_arguments import RepairToolArguments
 from pydantic_ai_harness.system_reminders import Reminder
 
 from . import db, malloy_bridge, metricflow_bridge
-from .metricflow_bridge import MetricDefinition, MetricFlowQuery
+from .metricflow_bridge import MetricDefinition, MetricFlowQuery, MetricFlowQueryWithSteps
 
 
 class SQLAnswer(BaseModel):
@@ -33,13 +33,17 @@ class MetricFlowAnswer(BaseModel):
     explanation: str = Field(description='One or two sentences on how the query answers the question.')
 
 
-class MetricFlowAnswerWithDefinitions(MetricFlowAnswer):
-    """The MetricFlow answer when the harness lets the agent define metrics: the definitions travel with the query,
-    so the compiled SQL is reproducible and reviewable."""
-
-    metric_definitions: list[MetricDefinition] = Field(
-        default_factory=list, description='Every metric you defined with define_metric that the query uses.'
-    )
+def _metricflow_answer_type(define: bool, steps: bool) -> type[BaseModel]:
+    """The MetricFlow answer for the enabled harness tools: query-time metric definitions and post-processing steps
+    travel with the query, so the compiled SQL is reproducible and reviewable. Baseline gets the plain answer."""
+    if not define and not steps:
+        return MetricFlowAnswer
+    fields: dict = {'query': (MetricFlowQueryWithSteps if steps else MetricFlowQuery,
+                              Field(description='The final MetricFlow query that answers the question.'))}
+    if define:
+        fields['metric_definitions'] = (list[MetricDefinition], Field(
+            default_factory=list, description='Every metric you defined with define_metric that the query uses.'))
+    return create_model('MetricFlowAnswerPlus', __base__=MetricFlowAnswer, **fields)
 
 
 class MalloyAnswer(BaseModel):
@@ -83,13 +87,24 @@ MetricFlow quick reference:
 """
 
 # Added to the MetricFlow instructions when the harness gives the agent define_metric.
+POST_STEPS_INSTRUCTIONS = """
+For per-group winners (the top product per category, the lowest day per warehouse) or a share of a total, add
+`post_process` steps to the query: `rank_filter` (partition_by, order_by with '-' for highest first, keep; ties are
+kept), `share_of_total` (metric, optional partition_by, name) and `select` (columns, to drop columns the question
+didn't ask for, such as a metric_time that an offset metric requires) and `drop_nulls` (columns; for example, drop an
+unknown-customer row after computing shares over all rows). Steps run on the result rows in order and can only use the
+query's own group-bys and metrics.
+"""
+
 DEFINE_METRIC_INSTRUCTIONS = """
 When no governed metric answers the question directly, define one with `define_metric`, built only from existing
 metrics: `derived` (an expression over inputs; `offset_window` reads an input from an earlier period, for
 period-over-period comparisons), `cumulative` (running totals, rolling `window`s such as '3 months', or
 `grain_to_date` such as year for year-to-date) or `ratio` (numerator / denominator, each optionally filtered). Then
 query it with `query_metrics`, and list every metric you defined in `metric_definitions` of your final answer.
-Offset and cumulative metrics need `metric_time` in the group_by.
+Offset and cumulative metrics need `metric_time` in the group_by. Cumulative windows are anchored on days, so for a
+trailing N-month figure at month grain, use a derived metric over offset inputs instead (e.g. the current month plus
+`offset_window` '1 month' and '2 months').
 """
 
 MALLOY_INSTRUCTIONS = f"""\
@@ -143,6 +158,8 @@ HARNESS_CAPABILITIES: dict[str, dict] = {
     'mf_define_metric': {'target': 'metricflow', 'default': True, 'label': 'Define metrics: a define_metric tool '
                          'to build a validated derived, cumulative or ratio metric from governed metrics when none '
                          'fits (period-over-period, running and rolling totals, filtered shares)'},
+    'mf_post_steps': {'target': 'metricflow', 'default': True, 'label': 'Result steps: per-group top-N and share of '
+                      'total applied to the governed result rows (like a BI tool on the semantic layer)'},
     'malloy_flat_output': {'target': 'malloy', 'default': True, 'label': 'Flat output: the final result must not '
                            'contain nested rows (from nest:); the model flattens it'},
 }
@@ -177,7 +194,9 @@ REVIEW_TARGET_RULES = {
    example, filtering to 2025 before LAG removes December 2024, so January has no prior month)?""",
     'metricflow': """\
 4. Query-time metrics: if the answer defines metrics, does each definition compute what the question asks (offset
-   direction and size, window length, period-to-date grain, ratio numerator and denominator and their filters)?""",
+   direction and size, window length, period-to-date grain, ratio numerator and denominator and their filters)?
+5. Result steps: does each post_process step rank or total within the right partition, in the right direction,
+   keeping the right number of rows?""",
     'malloy': """\
 4. Calculations across periods: is any where-filter applied in the same stage as a calculation that needs earlier
    periods (a filter to 2025 removes December 2024, so January has no prior month)?""",
@@ -218,7 +237,7 @@ def _block_writes(call: ToolCallInfo) -> GuardrailResult:
 def _block_uncompilable_metricflow(definitions: list[MetricDefinition]):
     def guard(call: ToolCallInfo) -> GuardrailResult:
         try:
-            metricflow_bridge.compile(MetricFlowQuery.model_validate(call.args['query']), definitions)
+            metricflow_bridge.compile(MetricFlowQueryWithSteps.model_validate(call.args['query']), definitions)
         except Exception as e:
             return GuardrailResult.block(f'MetricFlow query does not compile: {e}')
         return GuardrailResult.allow()
@@ -444,14 +463,16 @@ def build_agent(
     cache = 'prompt_cache' in harness
     guarded = 'output_check' in harness or 'answer_review' in harness
     define = context == 'metricflow' and 'mf_define_metric' in harness
+    steps = context == 'metricflow' and 'mf_post_steps' in harness
     definitions: list[MetricDefinition] = []  # metrics this case defined with define_metric
     agent = Agent(
         make_model(model_name, api_key, workspace_id),
-        output_type=MetricFlowAnswerWithDefinitions if define else
-        {'metricflow': MetricFlowAnswer, 'malloy': MalloyAnswer}.get(context, SQLAnswer),
+        output_type=_metricflow_answer_type(define, steps) if context == 'metricflow' else
+        {'malloy': MalloyAnswer}.get(context, SQLAnswer),
         instructions={
             'raw': INSTRUCTIONS,
-            'metricflow': METRICFLOW_INSTRUCTIONS + (DEFINE_METRIC_INSTRUCTIONS if define else ''),
+            'metricflow': METRICFLOW_INSTRUCTIONS + (DEFINE_METRIC_INSTRUCTIONS if define else '')
+            + (POST_STEPS_INSTRUCTIONS if steps else ''),
             'malloy': MALLOY_INSTRUCTIONS,
         }[context],
         capabilities=_build_capabilities(harness, context, reviewer, log, definitions),
@@ -463,7 +484,6 @@ def build_agent(
     )
 
     if context == 'metricflow':
-        @agent.tool_plain
         def query_metrics(query: MetricFlowQuery) -> dict | str:
             """Compile a MetricFlow query to SQL, run it, and return the SQL, columns, rows (capped) and total row count."""
             try:
@@ -471,6 +491,10 @@ def build_agent(
                 return {'sql': sql, **db.run_readonly(sql)}
             except Exception as e:
                 return f'ERROR: {e}'
+
+        # With result steps on, the tool takes the extended query (its schema is what the model sees).
+        query_metrics.__annotations__['query'] = MetricFlowQueryWithSteps if steps else MetricFlowQuery
+        agent.tool_plain(query_metrics)
 
         if define:
             @agent.tool_plain

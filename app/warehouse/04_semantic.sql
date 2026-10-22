@@ -4,8 +4,9 @@
 
 CREATE SCHEMA semantic;
 
+-- Ends with the data (2025-09-30), so offset and rolling metrics don't produce empty periods after it.
 CREATE VIEW semantic.time_spine AS
-SELECT date_day FROM marts.dim_date;
+SELECT date_day FROM marts.dim_date WHERE date_day <= DATE '2025-09-30';
 
 CREATE VIEW semantic.customers AS
 SELECT
@@ -13,10 +14,15 @@ SELECT
     c.email,
     c.first_name || ' ' || c.last_name AS customer_name,
     c.country_code,
+    CAST(c.first_seen_at AS DATE) AS first_seen_date,
     CASE WHEN c.is_wholesale THEN 'wholesale'
          WHEN c.customer_key IN (SELECT customer_key FROM marts.dim_subscriptions) THEN 'member'
          ELSE 'retail' END AS customer_segment,
-    coalesce(c.hubspot_original_source, 'unknown') AS acquisition_source
+    coalesce(c.hubspot_original_source, 'unknown') AS acquisition_source,
+    -- Cross-domain flags for customer segmentation (any order counts, cancelled included)
+    c.customer_key IN (SELECT customer_key FROM marts.fct_orders WHERE customer_key IS NOT NULL) AS has_ordered,
+    c.customer_key IN (SELECT customer_key FROM marts.fct_tickets WHERE customer_key IS NOT NULL) AS has_opened_ticket,
+    c.customer_key IN (SELECT customer_key FROM marts.dim_subscriptions WHERE customer_key IS NOT NULL) AS has_membership
 FROM marts.dim_customers c;
 
 CREATE VIEW semantic.products AS
@@ -37,7 +43,12 @@ SELECT
          WHEN o.financial_status = 'pending' THEN 'pending'
          ELSE 'completed' END AS order_status,
     o.subtotal_usd,
-    least(coalesce(r.refund_usd, 0), o.subtotal_usd) AS refund_usd
+    least(coalesce(r.refund_usd, 0), o.subtotal_usd) AS refund_usd,
+    -- Repeat-purchase sequence over every order of a known customer (cancelled included, like is_first_order)
+    CASE WHEN o.customer_key IS NOT NULL
+         THEN row_number() OVER (PARTITION BY o.customer_key ORDER BY o.created_at) END AS order_sequence,
+    CASE WHEN o.customer_key IS NOT NULL
+         THEN o.order_date - lag(o.order_date) OVER (PARTITION BY o.customer_key ORDER BY o.created_at) END AS days_since_prior_order
 FROM marts.fct_orders o
 LEFT JOIN (SELECT order_id, SUM(refund_amount_usd) AS refund_usd FROM marts.fct_refunds GROUP BY 1) r USING (order_id);
 

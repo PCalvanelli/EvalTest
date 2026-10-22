@@ -68,19 +68,36 @@ Other deliberate traps:
     - MetricFlow validates the metric in-process against a per-question copy of the semantic manifest, and the
       definitions travel with the final answer.
     - New semantic models or dimensions are out of scope: they would mean writing SQL.
+    - **Result steps** (`post_process`): `rank_filter` (per-group top-N, ties kept), `share_of_total`, `select`. They
+      run on MetricFlow's result rows, like a BI tool on the semantic layer, and never on warehouse tables.
   - **Malloy**: **flat output**. A result with nested rows (`nest:`) is sent back once to be flattened.
   - Off by default (they added tokens without helping): `SystemReminders`, `Planning`, `RepairToolArguments`.
 
   Judge harness vs no harness with **Runs ≥ 3**. With 22 prompts, a single prompt is a 4.5-point swing.
 
+## Benchmark sets and the ceiling
+
+- **Sample sets:** the Prompts tab offers two, **Benchmark (22)** and **Held-out (10)**.
+- **Held-out:** written and verified before the semantic layers and harness were tuned on the benchmark, so a score
+  there shows whether those improvements generalize. Don't tune against it.
+- **The ceiling:** `uv run python -m app.expressibility` runs a hand-written MetricFlow and Malloy answer for every
+  question in both sets, graded with the eval's own matcher. Today every question is expressible in both, so any
+  score below that is agent error, not a missing capability in the layer.
+
 ## Scoring
 
 The eval framework is [Pydantic Evals](https://pydantic.dev/docs/ai/evals/). Each prompt is a `Case`, checked by:
 - `ExecutesOK`: the query runs;
-- `ResultMatches`: only when you give an expected SQL; compares result values ignoring row order. The sample prompts' expected SQL encodes the governed metric definitions and returns the same results;
-- `LLMJudge`: grades against your rubric.
+- `ResultMatches`: only when you give an expected SQL; compares result values ignoring row and column order, with numbers equal within 0.5% (extra or missing columns still fail). A prompt with `match: 'numbers'` compares only numeric columns, for answers whose labels can vary (TRUE/FALSE vs 'first'/'repeat'). The sample prompts' expected SQL encodes the governed metric definitions and returns the same results;
+- `LLMJudge` (Sonnet 5.5 by default):
+  - **With an expected SQL**, it gets the verified reference (its SQL, row count and first rows). It checks that the
+    answer agrees with the reference, allowing presentation differences, and that the explanation honestly describes
+    the query. The rubric is context only.
+  - **Without one**, it grades on the rubric.
+  - The rubric is a list of company definitions, each scoped to the metrics it names.
+  - Claude 4.7+ models only accept default sampling settings, so the judge runs at the default temperature.
 
-A case passes only if every check passes.
+A case passes only if every check passes. Each cell also reports the two graders separately (rows match, judge pass) and how often they disagree, which usually points at the question or the grading. To check the judge itself, label cases in the Labels tab: it reports the judge's agreement (Cohen's κ) with your labels.
 
 **Consistency:** with Runs > 1, each cell reports **pass^k**, the share of prompts that passed in *every* run, plus the prompts that are **flaky** (passed in some runs but not all).
 The ★ goes to the best pass^k. Mean pass rate measures average accuracy; pass^k measures accuracy you can rely on.

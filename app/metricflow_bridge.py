@@ -46,6 +46,71 @@ class MetricFlowQuery(BaseModel):
     limit: int | None = None
 
 
+class PostStep(BaseModel):
+    """A presentation step over MetricFlow's result rows (like a BI tool on the dbt Semantic Layer). Never reads
+    warehouse tables: it only ranks or rescales the governed result."""
+
+    kind: Literal['rank_filter', 'share_of_total', 'select', 'drop_nulls'] = Field(
+        description='rank_filter: keep the top `keep` rows per partition by order_by (ties kept). '
+                    'share_of_total: add a column metric / total of that metric over the partition (or all rows). '
+                    'select: keep only the listed columns, in that order. '
+                    'drop_nulls: drop rows where any listed column is NULL (e.g. an unknown customer), after earlier steps.'
+    )
+    partition_by: list[str] = Field(default_factory=list, description='Group-by names of the query to rank or total within; empty = all rows.')
+    order_by: str | None = Field(None, description="rank_filter: a metric or group-by of the query; prefix '-' for highest first.")
+    keep: int = Field(1, ge=1, description='rank_filter: rows to keep per partition (rank <= keep, so ties are kept).')
+    metric: str | None = Field(None, description='share_of_total: the metric to divide by its total.')
+    name: str | None = Field(None, pattern=r'^[a-z][a-z0-9_]*$', description='share_of_total: the new column name (default <metric>_share).')
+    columns: list[str] = Field(default_factory=list, description='select: the columns to return, in order; drop_nulls: the columns to check.')
+
+
+class MetricFlowQueryWithSteps(MetricFlowQuery):
+    post_process: list[PostStep] = Field(
+        default_factory=list,
+        description='Optional steps applied in order to the result rows: per-group top-N (rank_filter) or share of a '
+                    'total (share_of_total).',
+    )
+
+
+def _quote(name: str) -> str:
+    return '"' + name.replace('"', '""') + '"'
+
+
+def _apply_steps(sql: str, query: MetricFlowQuery) -> str:
+    """Wrap MetricFlow's SQL in one outer query per post-processing step."""
+    columns = set(query.group_by) | set(query.metrics)
+    for step in getattr(query, 'post_process', []) or []:
+        unknown = [c for c in [*step.partition_by, (step.order_by or '').lstrip('-'), step.metric or '', *step.columns]
+                   if c and c not in columns]
+        if unknown:
+            raise MetricFlowError(f'{", ".join(unknown)} is not a group-by or metric of this query; '
+                                  f'steps can only use: {", ".join(sorted(columns))}.')
+        partition = f'PARTITION BY {", ".join(map(_quote, step.partition_by))} ' if step.partition_by else ''
+        if step.kind == 'drop_nulls':
+            if not step.columns:
+                raise MetricFlowError('drop_nulls needs columns.')
+            sql = f'SELECT * FROM ({sql}) mf WHERE ' + ' AND '.join(f'{_quote(c)} IS NOT NULL' for c in step.columns)
+        elif step.kind == 'select':
+            if not step.columns:
+                raise MetricFlowError('select needs columns.')
+            sql = f'SELECT {", ".join(map(_quote, step.columns))} FROM ({sql}) mf'
+            columns = set(step.columns)
+        elif step.kind == 'rank_filter':
+            if not step.order_by:
+                raise MetricFlowError('rank_filter needs order_by.')
+            direction = 'DESC' if step.order_by.startswith('-') else 'ASC'
+            sql = (f'SELECT * FROM ({sql}) mf QUALIFY rank() OVER ({partition}ORDER BY '
+                   f'{_quote(step.order_by.lstrip("-"))} {direction}) <= {int(step.keep)}')
+        else:
+            if not step.metric:
+                raise MetricFlowError('share_of_total needs metric.')
+            name = step.name or f'{step.metric}_share'
+            columns.add(name)
+            sql = (f'SELECT *, {_quote(step.metric)} / NULLIF(SUM({_quote(step.metric)}) OVER ({partition.strip()}), 0) '
+                   f'AS {_quote(name)} FROM ({sql}) mf')
+    return sql
+
+
 class MetricInput(BaseModel):
     name: str = Field(description='An existing metric (governed, or one you defined earlier).')
     alias: str | None = Field(None, description='Name to use for this input inside a derived expr.')
@@ -209,7 +274,7 @@ def compile(query: MetricFlowQuery, definitions: Sequence[MetricDefinition] = ()
         raise MetricFlowError(message[:MAX_ERROR_CHARS]) from e
     if statement.bind_parameter_set.param_items:
         raise MetricFlowError('Query needs bind parameters, which are not supported here.')
-    return statement.sql.strip()
+    return _apply_steps(statement.sql.strip(), query)
 
 
 def check_definition(definition: MetricDefinition, earlier: Sequence[MetricDefinition] = ()) -> str:

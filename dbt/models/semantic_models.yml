@@ -15,9 +15,11 @@ semantic_models:
   - name: customers
     description: People resolved across Shopify, Stripe, Zendesk and HubSpot by email. One row per person.
     model: ref('customers')
+    defaults: {agg_time_dimension: first_seen_date}
     entities:
       - {name: customer, type: primary, expr: customer_key}
     dimensions:
+      - {name: first_seen_date, type: time, type_params: {time_granularity: day}, description: "First seen in any system (store, billing, support)."}
       - {name: email, type: categorical, description: Customer email.}
       - {name: customer_name, type: categorical, description: Customer full name (not unique).}
       - {name: country, type: categorical, expr: country_code, description: "Two-letter country code, e.g. US, DE. Null without a Shopify account."}
@@ -27,6 +29,11 @@ semantic_models:
       - name: acquisition_source
         type: categorical
         description: "organic_search, paid_search, paid_social, email_marketing, direct_traffic, referrals, unknown."
+      - {name: has_ordered, type: categorical, description: "TRUE when the customer has placed any order (cancelled included)."}
+      - {name: has_opened_ticket, type: categorical, description: TRUE when the customer has opened any support ticket.}
+      - {name: has_membership, type: categorical, description: TRUE when the customer has ever held a membership subscription.}
+    measures:
+      - {name: customers_all, agg: count, expr: customer_key, description: People.}
 
   - name: products
     description: Products.
@@ -54,6 +61,8 @@ semantic_models:
       - {name: currency, type: categorical, description: "Original order currency (USD, EUR, GBP)."}
       - {name: is_first_order, type: categorical, description: TRUE for a customer's first order.}
       - {name: is_cancelled, type: categorical, description: TRUE for cancelled orders.}
+      - {name: order_sequence, type: categorical, description: "1 for a customer's first order, 2 for the second, ... (every order, cancelled included; NULL when the customer is unknown)."}
+      - {name: days_since_prior_order, type: categorical, description: "Days since the same customer's previous order; NULL for first orders."}
     measures:
       - {name: orders_all, agg: count, expr: order_id, description: Orders including cancelled ones.}
       - {name: orders_valid, agg: sum, expr: "CASE WHEN NOT is_cancelled THEN 1 ELSE 0 END", description: Non-cancelled orders.}
@@ -61,6 +70,7 @@ semantic_models:
       - {name: refunds_usd, agg: sum, expr: "CASE WHEN NOT is_cancelled THEN refund_usd END", description: "Refunds capped at the order subtotal, non-cancelled orders."}
       - {name: net_revenue_usd, agg: sum, expr: "CASE WHEN NOT is_cancelled THEN subtotal_usd - refund_usd END", description: "Subtotal minus refunds, non-cancelled orders."}
       - {name: active_customer_keys, agg: count_distinct, expr: "CASE WHEN NOT is_cancelled THEN customer_key END", description: Distinct customers with a non-cancelled order.}
+      - {name: days_between_orders_median, agg: median, expr: days_since_prior_order, description: Median days since the same customer's previous order.}
 
   - name: order_lines
     description: Order line items with products, USD. Cancelled orders are excluded from the sales metrics.
@@ -118,11 +128,13 @@ semantic_models:
       - {name: channel, type: categorical, description: "email, web, chat, phone."}
       - {name: status, type: categorical, description: "new, open, pending, solved, closed."}
       - {name: subject, type: categorical, description: Ticket subject line.}
+      - {name: first_reply_hours, type: categorical, expr: first_reply_hours, description: "Hours to the first public agent reply; NULL without a reply."}
+      - {name: resolution_hours, type: categorical, expr: resolution_hours, description: "Hours from creation to solved; NULL while unsolved."}
     measures:
       - {name: tickets_all, agg: count, expr: ticket_id, description: Tickets.}
       - {name: tickets_solved, agg: sum, expr: "CASE WHEN is_solved THEN 1 ELSE 0 END", description: Tickets in solved or closed status.}
-      - {name: first_reply_hours, agg: average, description: "Hours to the first public agent reply, tickets with a reply."}
-      - {name: resolution_hours, agg: average, description: "Hours from creation to solved, solved tickets."}
+      - {name: first_reply_hours_avg, agg: average, expr: first_reply_hours, description: "Hours to the first public agent reply, tickets with a reply."}
+      - {name: resolution_hours_avg, agg: average, expr: resolution_hours, description: "Hours from creation to solved, solved tickets."}
 
   - name: ad_stats
     description: Paid media across Google Ads and Facebook Ads, daily per campaign, USD.

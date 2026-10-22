@@ -8,6 +8,7 @@ import json
 import os
 from collections.abc import AsyncIterator
 from pathlib import Path
+from typing import Literal
 
 os.environ.setdefault('PYDANTIC_AI_NO_BANNER', '1')
 os.environ.setdefault('MLFLOW_DISABLE_AGENT_HINT', '1')  # MLflow logs a coding-assistant hint on import otherwise
@@ -41,13 +42,14 @@ async def revalidate_static(request: Request, call_next):
 class PromptIn(BaseModel):
     text: str
     expected_sql: str | None = None
+    match: Literal['rows', 'numbers'] = 'rows'  # numbers: compare only numeric columns (labels may vary)
 
 
 class RunRequest(BaseModel):
     api_key: str = Field(min_length=1)
     workspace_id: str | None = None
     models: list[str] = Field(min_length=1)
-    judge_model: str = 'claude-haiku-5-5'
+    judge_model: str = 'claude-sonnet-5-5'
     harness_modes: list[bool] = Field(min_length=1)
     context_modes: list[Context] = Field(min_length=1)
     harness: list[str] = Field(default_factory=lambda: [k for k, v in HARNESS_CAPABILITIES.items() if v['default']])

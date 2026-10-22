@@ -30,10 +30,16 @@ source: customer is duckdb.sql("""
 // ─────────────────────────── Sales ───────────────────────────
 
 // One row per order. refund_usd = total refunded on the order; is_first_order = the customer's earliest order.
+// order_sequence = 1 for a customer's first order, 2 for the second, ... and days_since_prior_order = days since the
+// same customer's previous order (every order counts, cancelled included; both NULL when the customer is unknown).
 source: orders is duckdb.sql("""
   SELECT o.*,
          coalesce(r.refund_usd, 0) AS refund_usd,
-         row_number() OVER (PARTITION BY o.shopify_customer_id ORDER BY o.created_at) = 1 AS is_first_order
+         row_number() OVER (PARTITION BY o.shopify_customer_id ORDER BY o.created_at) = 1 AS is_first_order,
+         CASE WHEN o.customer_key IS NOT NULL
+              THEN row_number() OVER (PARTITION BY o.customer_key ORDER BY o.created_at) END AS order_sequence,
+         CASE WHEN o.customer_key IS NOT NULL
+              THEN o.order_date - lag(o.order_date) OVER (PARTITION BY o.customer_key ORDER BY o.created_at) END AS days_since_prior_order
   FROM marts.fct_orders o
   LEFT JOIN (SELECT order_id, SUM(refund_amount_usd) AS refund_usd FROM marts.fct_refunds GROUP BY 1) r USING (order_id)
 """) extend {
@@ -66,6 +72,21 @@ source: orders is duckdb.sql("""
     // Distinct customers with at least one non-cancelled order.
     active_customers is count(customer_key) { where: cancelled_at is null }
 }
+
+// Gaps between a customer's consecutive orders, summarized per position in the sequence (Malloy has no median
+// aggregate on DuckDB, so medians are precomputed here). gap_after_order = 1 is the first-to-second order gap.
+source: order_gap_stats is duckdb.sql("""
+  SELECT order_sequence - 1 AS gap_after_order,
+         median(days_since_prior_order) AS median_days,
+         avg(days_since_prior_order) AS avg_days,
+         count(*) AS gap_count
+  FROM (
+    SELECT row_number() OVER (PARTITION BY customer_key ORDER BY created_at) AS order_sequence,
+           order_date - lag(order_date) OVER (PARTITION BY customer_key ORDER BY created_at) AS days_since_prior_order
+    FROM marts.fct_orders WHERE customer_key IS NOT NULL
+  ) WHERE days_since_prior_order IS NOT NULL
+  GROUP BY 1
+""")
 
 source: products is duckdb.table('marts.dim_products') extend {
   primary_key: product_id
