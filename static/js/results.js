@@ -183,9 +183,12 @@ function renderReport(r) {
       ${stat('Pass rate', `${pct(r.pass_rate)} <span class="text-sm font-normal text-ink-muted">(${r.passed}/${r.total})</span>`)}
       ${stat('Cell time', fmtS(r.total_seconds))}
       ${stat('Avg / prompt', fmtS(r.avg_case_seconds))}
-      ${stat('Tokens', (r.total_tokens ?? 0).toLocaleString())}
+      ${stat('Tokens', `${(r.total_tokens ?? 0).toLocaleString()}${r.cache_read_tokens ? ` <span class="text-sm font-normal text-ink-muted">(${pct(r.cache_read_tokens / Math.max(r.input_tokens, 1))} of input cached)</span>` : ''}`)}
       ${stat('Requests', r.requests)}
       ${stat('Tool calls', r.tool_calls)}
+      ${r.reviews ? stat('Reviews', `${r.reviews} <span class="text-sm font-normal text-ink-muted">(${r.sent_back} sent back)</span>`) : ''}
+      ${r.defined_metrics ? stat('Metrics defined', r.defined_metrics) : ''}
+      ${r.lint_retries ? stat('Lint retries', r.lint_retries) : ''}
       ${r.context === 'glossary_search' ? stat('Glossary searches', r.glossary_searches) : ''}
     </div>
     <div class="grid gap-3 xl:grid-cols-2">${r.cases.map((c) => renderCase(c, r.context)).join('')}</div>
@@ -209,7 +212,10 @@ function renderCase(c, context) {
   const checks = Object.entries(c.checks || {}).map(([name, v]) => checkLine(name, v.passed, v.reason)).join('');
   const meta = c.seconds != null
     ? `${fmtS(c.seconds)} · ${((c.input_tokens || 0) + (c.output_tokens || 0)).toLocaleString()} tok · ${c.requests ?? 0} req · ${c.tool_calls ?? 0} tool calls` +
-      (context === 'glossary_search' ? ` · ${c.glossary_searches ?? 0} glossary searches` : '')
+      (context === 'glossary_search' ? ` · ${c.glossary_searches ?? 0} glossary searches` : '') +
+      (c.reviews ? ` · ${c.reviews} review${c.reviews > 1 ? 's' : ''}${c.sent_back ? `, ${c.sent_back} sent back` : ''}` : '') +
+      (c.defined_metrics ? ` · ${c.defined_metrics} metric${c.defined_metrics > 1 ? 's' : ''} defined` : '') +
+      (c.lints?.length ? ` · lint: ${esc(c.lints.join('; '))}` : '')
     : '';
   return `
   <article class="min-w-0 rounded-control border p-3 ${c.passed ? 'border-success/30' : 'border-danger/30'}">

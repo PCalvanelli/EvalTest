@@ -136,9 +136,13 @@ export function initRun(cfg) {
         <p class="mt-1 text-xs">${contextFacts(info).map(([k, v]) => `<span class="text-ink-muted">${k}:</span> ${
           k === 'Tools' ? `<code class="font-mono">${esc(v)}</code>` : esc(v)}`).join('<span class="mx-2 text-ink-subtle">|</span>')}</p></dd></div>`;
   }).join('');
-  $('#harnessList').innerHTML = Object.entries(cfg.harness_capabilities).map(([k, desc]) => `
-    <label class="flex items-start gap-2"><input type="checkbox" class="harness-cap mt-1 accent-[rgb(var(--accent))]" value="${esc(k)}" checked>
-      <span>${esc(desc)}</span></label>`).join('');
+  // One group per target: the shared core first, then each business context's own harness.
+  $('#harnessList').innerHTML = Object.entries(cfg.harness_targets).map(([target, name]) => {
+    const caps = Object.entries(cfg.harness_capabilities).filter(([, cap]) => cap.target === target);
+    return `<fieldset class="space-y-2"><legend class="mb-1.5 text-[13px] font-medium text-ink-muted">${esc(name)}</legend>${
+      caps.map(([k, cap]) => `<label class="flex items-start gap-2"><input type="checkbox" class="harness-cap mt-1 accent-[rgb(var(--accent))]" value="${esc(k)}" ${cap.default ? 'checked' : ''}>
+        <span>${esc(cap.label)}</span></label>`).join('')}</fieldset>`;
+  }).join('');
   updateCount();
   $$('[data-subtab]').forEach((t) => t.onclick = () => showRunTab(t.dataset.subtab));
   $$('[data-ref]').forEach((b) => b.onclick = () => showReference(b.dataset.ref));

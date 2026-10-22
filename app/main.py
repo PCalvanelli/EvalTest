@@ -18,7 +18,7 @@ from fastapi.staticfiles import StaticFiles  # noqa: E402
 from pydantic import BaseModel, Field  # noqa: E402
 
 from . import db, history, malloy_bridge, metricflow_bridge, mlflow_ui, tracking  # noqa: E402
-from .agent import CONTEXTS, HARNESS_CAPABILITIES, Context  # noqa: E402
+from .agent import CONTEXTS, HARNESS_CAPABILITIES, TARGET_NAMES, Context  # noqa: E402
 from .evals import run_eval  # noqa: E402
 from .pricing import PRICES_AS_OF, PRICING  # noqa: E402
 
@@ -50,7 +50,7 @@ class RunRequest(BaseModel):
     judge_model: str = 'claude-haiku-5-5'
     harness_modes: list[bool] = Field(min_length=1)
     context_modes: list[Context] = Field(min_length=1)
-    harness: list[str] = Field(default_factory=lambda: list(HARNESS_CAPABILITIES))
+    harness: list[str] = Field(default_factory=lambda: [k for k, v in HARNESS_CAPABILITIES.items() if v['default']])
     prompts: list[PromptIn] = Field(min_length=1)
     rubric: str = Field(min_length=1)
     repeats: int = Field(1, ge=1, le=10, description='Run the whole matrix this many times, one after another.')
@@ -77,6 +77,7 @@ def config() -> dict:
         'pricing': PRICING,
         'prices_as_of': PRICES_AS_OF,
         'harness_capabilities': HARNESS_CAPABILITIES,
+        'harness_targets': TARGET_NAMES,
         'mlflow': {'enabled': tracking.ENABLED, 'embedded': _MLFLOW_APP is not None, 'ui_url': tracking.UI_URL},
     }
 

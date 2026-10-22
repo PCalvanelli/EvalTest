@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import subprocess
 import sys
 import threading
-from functools import cache
+from collections.abc import Sequence
+from functools import cache, lru_cache
 from pathlib import Path
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -41,6 +44,62 @@ class MetricFlowQuery(BaseModel):
     )
     order_by: list[str] = Field(default_factory=list, description='Metric or group-by names; prefix with - for descending.')
     limit: int | None = None
+
+
+class MetricInput(BaseModel):
+    name: str = Field(description='An existing metric (governed, or one you defined earlier).')
+    alias: str | None = Field(None, description='Name to use for this input inside a derived expr.')
+    offset_window: str | None = Field(
+        None, description="Read the metric from an earlier period, e.g. '1 month' or '1 year' (derived metrics only)."
+    )
+    filter: str | None = Field(None, description="MetricFlow Jinja filter, e.g. \"{{ Dimension('ticket__priority') }} = 'urgent'\".")
+
+
+class MetricDefinition(BaseModel):
+    """A metric the agent defines at query time, built only from existing metrics (the harness's MetricFlow tool)."""
+
+    name: str = Field(pattern=r'^[a-z][a-z0-9_]*$', description='New, unused snake_case name.')
+    description: str = Field(description='What it measures, in one sentence.')
+    type: Literal['derived', 'cumulative', 'ratio'] = Field(
+        description='derived: an expression over input metrics (offset_window for prior periods); '
+                    'cumulative: a running, rolling or period-to-date total of one metric; '
+                    'ratio: numerator / denominator metrics, each optionally filtered.'
+    )
+    expr: str | None = Field(None, description="derived: SQL expression over the input names/aliases, e.g. 'revenue / prev - 1'.")
+    metrics: list[MetricInput] = Field(default_factory=list, description='derived: the input metrics.')
+    metric: MetricInput | None = Field(None, description='cumulative: the metric to accumulate.')
+    window: str | None = Field(None, description="cumulative: rolling window, e.g. '3 months'. Omit for all-time.")
+    grain_to_date: Literal['week', 'month', 'quarter', 'year'] | None = Field(
+        None, description='cumulative: reset at the start of each period (e.g. year for year-to-date).'
+    )
+    numerator: MetricInput | None = Field(None, description='ratio: numerator metric.')
+    denominator: MetricInput | None = Field(None, description='ratio: denominator metric.')
+
+    def to_manifest(self) -> dict:
+        """The metric in the semantic manifest's own shape."""
+        inp = lambda m: m.model_dump(exclude_none=True) if m else None  # noqa: E731
+        if self.type == 'derived':
+            if not self.expr or not self.metrics:
+                raise MetricFlowError('A derived metric needs expr and metrics.')
+            params = {'expr': self.expr, 'metrics': [inp(m) for m in self.metrics]}
+        elif self.type == 'cumulative':
+            if self.metric is None:
+                raise MetricFlowError('A cumulative metric needs metric.')
+            if self.window and self.grain_to_date:
+                raise MetricFlowError('Use either window or grain_to_date, not both.')
+            cumulative = {'metric': inp(self.metric), 'period_agg': 'last'}
+            cumulative |= {'window': self.window} if self.window else {}
+            cumulative |= {'grain_to_date': self.grain_to_date} if self.grain_to_date else {}
+            params = {'cumulative_type_params': cumulative}
+        else:
+            if self.numerator is None or self.denominator is None:
+                raise MetricFlowError('A ratio metric needs numerator and denominator.')
+            num, den = inp(self.numerator), inp(self.denominator)
+            if num['name'] == den['name']:  # same metric on both sides: MetricFlow needs distinct column names
+                num.setdefault('alias', f'{self.name}_numerator')
+                den.setdefault('alias', f'{self.name}_denominator')
+            params = {'numerator': num, 'denominator': den}
+        return {'name': self.name, 'description': self.description, 'type': self.type, 'type_params': params}
 
 
 class MetricFlowError(Exception):
@@ -90,18 +149,47 @@ _lock = threading.Lock()  # the engine renumbers its generated ids per query; ke
 
 
 @cache
-def _engine():  # noqa: ANN202
+def _base_manifest() -> dict:
+    _build_manifest()
+    return json.loads(MANIFEST.read_text())
+
+
+@lru_cache(maxsize=64)
+def _engine(extra_metrics: str = '[]'):  # noqa: ANN202
+    """The engine over the governed manifest, plus any query-time metric definitions (as a JSON list, so the cache
+    can key on it). Definitions are validated like dbt validates the project; problems raise MetricFlowError."""
     from metricflow.engine.metricflow_engine import MetricFlowEngine
+    from metricflow_semantic_interfaces.validations.semantic_manifest_validator import SemanticManifestValidator
     from metricflow_semantics.model.dbt_manifest_parser import parse_manifest_from_dbt_generated_manifest
     from metricflow_semantics.model.semantic_manifest_lookup import SemanticManifestLookup
 
-    _build_manifest()
-    manifest = parse_manifest_from_dbt_generated_manifest(MANIFEST.read_text())
-    return MetricFlowEngine(semantic_manifest_lookup=SemanticManifestLookup(manifest), sql_client=_CompileOnlyClient())
+    base, extra = _base_manifest(), json.loads(extra_metrics)
+    try:
+        manifest = parse_manifest_from_dbt_generated_manifest(json.dumps({**base, 'metrics': base['metrics'] + extra}))
+        if extra:
+            errors = SemanticManifestValidator().validate_semantic_manifest(manifest).errors
+            if errors:
+                raise MetricFlowError('Metric definition is invalid:\n' + '\n'.join(f'- {e.message}' for e in errors[:5]))
+        return MetricFlowEngine(semantic_manifest_lookup=SemanticManifestLookup(manifest), sql_client=_CompileOnlyClient())
+    except MetricFlowError:
+        raise
+    except Exception as e:
+        raise MetricFlowError(f'Metric definition is invalid: {(str(e).strip() or type(e).__name__)[:MAX_ERROR_CHARS]}') from e
 
 
-def compile(query: MetricFlowQuery) -> str:
-    """Compile a MetricFlow query to DuckDB SQL; raises MetricFlowError with MetricFlow's message on bad input."""
+def _definitions_key(definitions: Sequence[MetricDefinition]) -> str:
+    governed = {m['name'] for m in _base_manifest()['metrics']}
+    names = [d.name for d in definitions]
+    if clash := sorted(set(names) & governed):
+        raise MetricFlowError(f'{", ".join(clash)} already exists as a governed metric; pick a new name.')
+    if len(set(names)) != len(names):
+        raise MetricFlowError('Each defined metric needs a unique name.')
+    return json.dumps([d.to_manifest() for d in definitions], sort_keys=True)
+
+
+def compile(query: MetricFlowQuery, definitions: Sequence[MetricDefinition] = ()) -> str:
+    """Compile a MetricFlow query to DuckDB SQL; raises MetricFlowError with MetricFlow's message on bad input.
+    `definitions` are query-time metrics the query may use alongside the governed ones."""
     from metricflow.engine.metricflow_engine import MetricFlowQueryRequest
 
     if not query.metrics:
@@ -115,13 +203,24 @@ def compile(query: MetricFlowQuery) -> str:
     )
     try:
         with _lock:
-            statement = _engine().explain(request).sql_statement.without_descriptions
+            statement = _engine(_definitions_key(definitions)).explain(request).sql_statement.without_descriptions
     except Exception as e:
         message = str(e).strip() or type(e).__name__
         raise MetricFlowError(message[:MAX_ERROR_CHARS]) from e
     if statement.bind_parameter_set.param_items:
         raise MetricFlowError('Query needs bind parameters, which are not supported here.')
     return statement.sql.strip()
+
+
+def check_definition(definition: MetricDefinition, earlier: Sequence[MetricDefinition] = ()) -> str:
+    """Validate a new query-time metric against the governed ones and earlier definitions, then compile it once
+    on its own. Returns the SQL of that trial query; raises MetricFlowError with what to fix."""
+    others = [d for d in earlier if d.name != definition.name]  # redefining a name replaces it
+    definitions = [*others, definition]
+    try:  # offsets and windows need a time axis; every model's metric_time rolls up to month
+        return compile(MetricFlowQuery(metrics=[definition.name], group_by=['metric_time__month']), definitions)
+    except MetricFlowError:
+        return compile(MetricFlowQuery(metrics=[definition.name]), definitions)
 
 
 @cache

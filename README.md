@@ -45,10 +45,33 @@ Other deliberate traps:
   hub reaches orders, tickets and memberships. Queries can cross domains, nest, pipeline and compute ad-hoc fields. Queries compile through a Node
   sidecar (`malloy/compile.mjs`, the official `@malloydata/malloy` compiler) and execute in Python like every other context.
   `uv run python -m app.metricflow_bridge` checks parity: every gold answer must match in MetricFlow and Malloy, and the two must agree on every governed metric.
-- **Harness capabilities** (each one can be toggled in the UI):
-  - `ToolGuardrail`: SQL must be SELECT-only, and MetricFlow / Malloy queries must compile.
-  - `OutputGuardrail`: the final query must execute or the model retries.
-  - `SystemReminders`, `Planning` and `RepairToolArguments`.
+- **Harness: a shared core plus one harness per target.** Each target has its own failure modes and rules, so each
+  gets its own harness: a cell with the harness on gets the core plus its own target's group. The harness adds *process*
+  (caching, checks, review, tools, retries), never business knowledge, which would overlap with the business-context axis.
+  - **Core (every target)**:
+    - **Prompt caching**: the instructions, tool definitions and conversation are re-read from cache at the cache-read
+      price.
+    - **Answer review**: a fresh call to the same model checks the final query, explanation and first rows against the
+      question. Its checklist is target-specific, it has no rubric and no definitions, and it accepts answers that say
+      the question can't be expressed. It sends problems back at most twice.
+    - **Output check**: the final query must run and return data.
+    - **Tool guardrail**.
+    - Every step is bounded, so a case always ends with an answer on record. Reviewer tokens count toward the case's
+      cost.
+  - **Raw SQL**:
+    - **Deprecation lint**: tables documented as `DEPRECATED` are flagged in `run_sql` and, once, in the final query.
+    - **Column documentation**: the reviewer sees the warehouse's own documentation for every column the final query
+      uses.
+  - **dbt MetricFlow**: **`define_metric`**. When no governed metric fits, the agent defines a derived (with
+    `offset_window` for prior periods), cumulative (rolling `window` or `grain_to_date`) or ratio (filtered) metric from
+    governed metrics.
+    - MetricFlow validates the metric in-process against a per-question copy of the semantic manifest, and the
+      definitions travel with the final answer.
+    - New semantic models or dimensions are out of scope: they would mean writing SQL.
+  - **Malloy**: **flat output**. A result with nested rows (`nest:`) is sent back once to be flattened.
+  - Off by default (they added tokens without helping): `SystemReminders`, `Planning`, `RepairToolArguments`.
+
+  Judge harness vs no harness with **Runs ≥ 3**. With 22 prompts, a single prompt is a 4.5-point swing.
 
 ## Scoring
 

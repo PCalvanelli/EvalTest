@@ -17,6 +17,7 @@ MAX_ROWS = 50
 SAMPLE_ROWS = 3
 
 _READ_ONLY_START = re.compile(r'^\s*(select|with)\b', re.IGNORECASE)
+_YEAR_MONTH = re.compile(r'^\d{4}-\d{2}$')
 _TABLE_NAME = re.compile(r'^[a-z_][a-z0-9_]*\.[a-z_][a-z0-9_]*$')
 
 
@@ -142,6 +143,8 @@ def _normalize(v: object) -> object:
         return round(v, 2)
     if isinstance(v, str) and v.endswith(' 00:00:00'):
         return v[:-9]  # a midnight timestamp and a date are the same day (date_trunc returns either)
+    if isinstance(v, str) and _YEAR_MONTH.match(v):
+        return f'{v}-01'  # a month written as YYYY-MM is its first day, as date_trunc('month') gives it
     return v
 
 

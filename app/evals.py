@@ -12,7 +12,7 @@ from pydantic_evals import Case, Dataset
 from pydantic_evals.evaluators import Evaluator, EvaluatorContext, LLMJudge
 
 from . import db, tracking
-from .agent import Context, MalloyAnswer, MetricFlowAnswer, answer_sql, build_agent, make_model
+from .agent import Context, HarnessLog, target_capabilities, MalloyAnswer, MetricFlowAnswer, answer_sql, build_agent, make_model
 
 
 @dataclass
@@ -89,7 +89,8 @@ async def run_eval(
     async def run_case(prompt: str) -> dict:
         # Fresh agent per case so capability state never leaks. The limiter is shared by every
         # cell in the matrix, so `seconds` is measured after acquiring it (excludes queueing).
-        agent = build_agent(model, api_key, harness, workspace_id, context)
+        log = HarnessLog()
+        agent = build_agent(model, api_key, harness, workspace_id, context, log)
         async with limiter:
             start = time.perf_counter()
             try:
@@ -100,13 +101,16 @@ async def run_eval(
             seconds = time.perf_counter() - start
         answer = result.output
         metricflow_query = answer.query.model_dump(exclude_defaults=True) if isinstance(answer, MetricFlowAnswer) else None
+        if metricflow_query is not None and getattr(answer, 'metric_definitions', None):
+            metricflow_query['metric_definitions'] = [d.model_dump(exclude_none=True, exclude_defaults=True)
+                                                      for d in answer.metric_definitions]
         malloy_query = answer.malloy if isinstance(answer, MalloyAnswer) else None
         try:
             sql = await answer_sql(answer)
             rows, error = db.run_readonly(sql, max_rows=10), None
         except Exception as e:
             sql, rows, error = getattr(answer, 'sql', None), None, str(e)
-        u = result.usage
+        u, r = result.usage, log.reviewer_usage  # reviewer calls are part of the case's cost
         return {
             'sql': sql,
             'metricflow_query': metricflow_query,
@@ -115,9 +119,13 @@ async def run_eval(
             'rows': rows,
             'error': error,
             'seconds': seconds,
-            'usage': {'input_tokens': u.input_tokens, 'output_tokens': u.output_tokens,
-                      'cache_read_tokens': u.cache_read_tokens, 'cache_write_tokens': u.cache_write_tokens,
-                      'requests': u.requests, 'tool_calls': u.tool_calls},
+            'usage': {'input_tokens': u.input_tokens + r.get('input_tokens', 0),
+                      'output_tokens': u.output_tokens + r.get('output_tokens', 0),
+                      'cache_read_tokens': u.cache_read_tokens + r.get('cache_read_tokens', 0),
+                      'cache_write_tokens': u.cache_write_tokens + r.get('cache_write_tokens', 0),
+                      'requests': u.requests + r.get('requests', 0), 'tool_calls': u.tool_calls,
+                      'reviews': log.reviews, 'sent_back': log.sent_back,
+                      'defined_metrics': log.defined_metrics, 'lints': log.lints},
         }
 
     judge = make_model(judge_model, api_key, workspace_id)
@@ -166,7 +174,7 @@ async def run_eval(
     return {
         'label': label,
         'model': model,
-        'harness': list(harness),
+        'harness': target_capabilities(harness, context),  # what applied to this target
         'harness_on': bool(harness),
         'context': context,
         'total_seconds': total_seconds,
@@ -177,5 +185,11 @@ async def run_eval(
         'total_tokens': tokens,
         'tool_calls': sum(c.get('tool_calls', 0) for c in cases),
         'requests': sum(c.get('requests', 0) for c in cases),
+        'reviews': sum(c.get('reviews', 0) for c in cases),
+        'sent_back': sum(c.get('sent_back', 0) for c in cases),
+        'defined_metrics': sum(c.get('defined_metrics', 0) for c in cases),
+        'lint_retries': sum(len(c.get('lints') or []) for c in cases),
+        'cache_read_tokens': sum(c.get('cache_read_tokens', 0) for c in cases),
+        'input_tokens': sum(c.get('input_tokens', 0) for c in cases),
         'cases': cases,
     }
