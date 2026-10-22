@@ -115,7 +115,7 @@ async def run_eval(
             try:
                 result = await agent.run(prompt)
             except Exception as e:
-                return {'sql': None, 'metricflow_query': None, 'malloy_query': None, 'explanation': None, 'rows': None, 'row_count': None,
+                return {'sql': None, 'metricflow_query': None, 'malloy_query': None, 'explanation': None, 'rows': None,
                         'error': f'{type(e).__name__}: {e}', 'seconds': time.perf_counter() - start, 'usage': None}
             seconds = time.perf_counter() - start
         answer = result.output
@@ -126,10 +126,9 @@ async def run_eval(
         malloy_query = answer.malloy if isinstance(answer, MalloyAnswer) else None
         try:
             sql = await answer_sql(answer)
-            ran = db.run_readonly(sql, max_rows=10)
-            rows, row_count, error = ran['rows'], ran['row_count'], None
+            rows, error = db.run_readonly(sql, max_rows=10), None  # {columns, rows (first 10), row_count}
         except Exception as e:
-            sql, rows, row_count, error = getattr(answer, 'sql', None), None, None, str(e)
+            sql, rows, error = getattr(answer, 'sql', None), None, str(e)
         u, r = result.usage, log.reviewer_usage  # reviewer calls are part of the case's cost
         return {
             'sql': sql,
@@ -137,7 +136,6 @@ async def run_eval(
             'malloy_query': malloy_query,
             'explanation': answer.explanation,
             'rows': rows,
-            'row_count': row_count,  # rows holds at most the first 10
             'error': error,
             'seconds': seconds,
             'usage': {'input_tokens': u.input_tokens + r.get('input_tokens', 0),

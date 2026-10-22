@@ -234,11 +234,13 @@ function renderCase(c, context) {
   </article>`;
 }
 
-export function renderRows({columns, rows, row_count}) {
+export function renderRows(result) {
+  // Runs from eb0f019 stored rows as a bare list (no column names); render those too.
+  const {columns = [], rows = [], row_count = rows.length} = Array.isArray(result) ? {rows: result} : result;
   return `
   <div class="mt-2 overflow-x-auto">
     <table class="data-table w-full text-xs">
-      <thead><tr>${columns.map((c) => `<th>${esc(c)}</th>`).join('')}</tr></thead>
+      ${columns.length ? `<thead><tr>${columns.map((c) => `<th>${esc(c)}</th>`).join('')}</tr></thead>` : ''}
       <tbody>${rows.map((r) => `<tr>${r.map((v) => `<td class="tabular-nums">${esc(v)}</td>`).join('')}</tr>`).join('')}</tbody>
     </table>
     ${row_count > rows.length ? `<p class="mt-1 text-[11px] text-ink-subtle">Showing ${rows.length} of ${row_count} rows</p>` : ''}
