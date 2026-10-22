@@ -1,0 +1,10 @@
+{
+  "name": "evaltest-malloy-sidecar",
+  "private": true,
+  "type": "module",
+  "description": "Compiles Malloy queries to DuckDB SQL for the eval playground (stdin/stdout JSON lines).",
+  "dependencies": {
+    "@malloydata/malloy": "0.0.435",
+    "@malloydata/db-duckdb": "0.0.435"
+  }
+}

@@ -1,0 +1,559 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SQL Eval Playground</title>
+  <script src="https://cdn.tailwindcss.com/3.4.17"></script>
+</head>
+<body class="bg-slate-50 text-slate-800">
+<div class="max-w-[1500px] mx-auto p-4 lg:p-6">
+  <header class="mb-6">
+    <h1 class="text-2xl font-semibold">Text-to-SQL Eval Playground</h1>
+    <p class="text-sm text-slate-500">Pydantic Evals + Pydantic AI Harness over a DuckDB shop. Evaluate the matrix of model × harness × business context.</p>
+  </header>
+
+  <div class="grid lg:grid-cols-[400px_1fr] gap-6">
+    <!-- Config -->
+    <form id="form" class="space-y-5">
+      <section class="bg-white rounded-xl shadow-sm border p-4 space-y-3">
+        <h2 class="font-medium">API</h2>
+        <label class="block text-sm">Anthropic API key
+          <input id="apiKey" type="password" autocomplete="off" required placeholder="sk-ant-..."
+                 class="mt-1 w-full rounded-md border-slate-300 border px-3 py-2 font-mono text-sm">
+        </label>
+        <label class="block text-sm">Workspace ID <span class="text-slate-400">(optional)</span>
+          <input id="workspaceId" autocomplete="off" placeholder="wrkspc_..."
+                 class="mt-1 w-full rounded-md border-slate-300 border px-3 py-2 font-mono text-sm">
+          <span class="text-xs text-slate-500">Required when the key isn't scoped to a workspace (sent as <code>anthropic-workspace-id</code>).</span>
+        </label>
+        <label class="flex items-center gap-2 text-xs text-slate-500">
+          <input id="rememberKey" type="checkbox"> Remember key and workspace in this browser (localStorage)
+        </label>
+        <label class="block text-sm">Judge model
+          <select id="judgeModel" class="mt-1 w-full rounded-md border px-2 py-2 text-sm"></select>
+        </label>
+      </section>
+
+      <section class="bg-white rounded-xl shadow-sm border p-4 space-y-4">
+        <h2 class="font-medium">Matrix</h2>
+        <div>
+          <p class="text-xs uppercase tracking-wide text-slate-400 mb-1">Models</p>
+          <div id="modelChoices" class="flex flex-wrap gap-2 text-sm"></div>
+        </div>
+        <div>
+          <p class="text-xs uppercase tracking-wide text-slate-400 mb-1">Harness</p>
+          <div class="flex gap-2 text-sm" id="harnessChoices"></div>
+        </div>
+        <div>
+          <p class="text-xs uppercase tracking-wide text-slate-400 mb-1">Business context</p>
+          <div class="flex flex-wrap gap-2 text-sm" id="contextChoices"></div>
+          <p id="contextHelp" class="mt-1 text-xs text-slate-500 space-y-0.5"></p>
+        </div>
+        <div>
+          <div class="flex items-baseline justify-between">
+            <p class="text-xs uppercase tracking-wide text-slate-400 mb-1">Runs <span class="normal-case tracking-normal">(sequential repeats of the whole matrix)</span></p>
+            <span id="repeatsValue" class="text-sm font-semibold tabular-nums">1</span>
+          </div>
+          <input id="repeats" type="range" min="1" max="10" step="1" value="1" class="w-full accent-slate-800">
+        </div>
+        <p id="matrixCount" class="text-sm text-slate-600 bg-slate-50 rounded-md px-3 py-2 tabular-nums"></p>
+        <div id="harnessBox" class="space-y-1">
+          <p class="text-xs uppercase tracking-wide text-slate-400">Harness capabilities</p>
+          <div id="harnessList" class="space-y-1 text-sm"></div>
+        </div>
+      </section>
+
+      <section class="bg-white rounded-xl shadow-sm border p-4 space-y-3">
+        <div class="flex items-center justify-between">
+          <h2 class="font-medium">Prompts</h2>
+          <button type="button" id="addPrompt" class="text-sm text-indigo-600 hover:underline">+ Add prompt</button>
+        </div>
+        <div id="prompts" class="space-y-3"></div>
+      </section>
+
+      <section class="bg-white rounded-xl shadow-sm border p-4 space-y-2">
+        <h2 class="font-medium">Judge criteria</h2>
+        <textarea id="rubric" rows="5" required class="w-full rounded-md border px-3 py-2 text-sm"></textarea>
+        <p class="text-xs text-slate-500">Passed to <code>LLMJudge</code>. A case passes only if the query executes, matches the expected result (when given), and the judge passes it.</p>
+      </section>
+
+      <details class="bg-white rounded-xl shadow-sm border p-4">
+        <summary class="font-medium cursor-pointer">Warehouse catalog <span id="tableCount" class="text-xs font-normal text-slate-500"></span></summary>
+        <p class="mt-2 text-xs text-slate-500">The raw-SQL agent doesn't get this up front. It discovers tables with <code>list_tables</code> / <code>describe_table</code>.</p>
+        <pre id="schema" class="mt-2 text-xs bg-slate-900 text-slate-100 rounded-md p-3 overflow-auto max-h-[480px]"></pre>
+      </details>
+      <details class="bg-white rounded-xl shadow-sm border p-4">
+        <summary class="font-medium cursor-pointer">Business glossary</summary>
+        <p class="mt-2 text-xs text-slate-500">Plain-language definitions given to the agent in Glossary mode. No table names, no SQL.</p>
+        <pre id="glossary" class="mt-2 text-xs bg-slate-50 border rounded-md p-3 overflow-auto max-h-[480px] whitespace-pre-wrap"></pre>
+      </details>
+      <details class="bg-white rounded-xl shadow-sm border p-4">
+        <summary class="font-medium cursor-pointer">Malloy model</summary>
+        <p class="mt-2 text-xs text-slate-500">Given to the agent in Malloy mode. Same governed definitions as the semantic layer, with joined sources.</p>
+        <pre id="malloyModel" class="mt-2 text-xs bg-slate-900 text-slate-100 rounded-md p-3 overflow-auto max-h-[480px]"></pre>
+      </details>
+      <details class="bg-white rounded-xl shadow-sm border p-4">
+        <summary class="font-medium cursor-pointer">Semantic layer</summary>
+        <pre id="catalog" class="mt-3 text-xs bg-slate-900 text-slate-100 rounded-md p-3 overflow-auto max-h-[480px] whitespace-pre-wrap"></pre>
+      </details>
+
+      <button id="runBtn" type="submit"
+              class="w-full rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-medium py-3 disabled:opacity-50">
+        Run matrix
+      </button>
+    </form>
+
+    <!-- Results -->
+    <main class="min-w-0 space-y-6">
+      <div id="status" class="hidden rounded-lg border bg-white p-3 text-sm"></div>
+      <section id="matrixWrap" class="hidden bg-white rounded-xl shadow-sm border p-4">
+        <h2 class="font-medium mb-1">Pass rate by cell</h2>
+        <p class="text-xs text-slate-500 mb-3">Click a cell for case-level detail. Time is wall clock for the cell, including queueing behind other cells and judging.</p>
+        <div class="overflow-x-auto"><table id="matrix" class="w-full text-sm border-separate border-spacing-1"></table></div>
+      </section>
+      <section id="perPromptWrap" class="hidden bg-white rounded-xl shadow-sm border p-4">
+        <h2 class="font-medium mb-3">Per prompt</h2>
+        <div class="overflow-x-auto"><table id="perPrompt" class="w-full text-xs"></table></div>
+      </section>
+      <div id="detail"></div>
+      <div id="empty" class="text-slate-400 text-sm border-2 border-dashed rounded-xl p-10 text-center">
+        Results will appear here.
+      </div>
+    </main>
+  </div>
+</div>
+
+<template id="promptTpl">
+  <div class="prompt-row rounded-lg border p-3 space-y-2 bg-slate-50">
+    <div class="flex gap-2">
+      <input class="p-text flex-1 rounded-md border px-3 py-2 text-sm" placeholder="Natural-language question">
+      <button type="button" class="p-remove text-slate-400 hover:text-red-600 px-2" title="Remove">✕</button>
+    </div>
+    <textarea class="p-sql w-full rounded-md border px-3 py-2 text-xs font-mono" rows="2"
+              placeholder="Expected SQL (optional) — enables result-set match"></textarea>
+  </div>
+</template>
+
+<script>
+const $ = (s) => document.querySelector(s);
+const $$ = (s) => [...document.querySelectorAll(s)];
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
+const store = {
+  get(k) { try { return localStorage.getItem(k); } catch { return null; } },
+  set(k, v) { try { localStorage.setItem(k, v); } catch {} },
+  del(k) { try { localStorage.removeItem(k); } catch {} },
+};
+
+const MODELS = [
+  {id: 'claude-opus-5-5', name: 'Opus 5.5'},
+  {id: 'claude-sonnet-5-5', name: 'Sonnet 5.5', checked: true},
+  {id: 'claude-haiku-5-5', name: 'Haiku 5.5'},
+];
+const modelName = (id) => MODELS.find((m) => m.id === id)?.name ?? id;
+const CONTEXTS = [
+  {id: 'raw', name: 'None'},
+  {id: 'glossary', name: 'Glossary (prompt)'},
+  {id: 'glossary_search', name: 'Glossary (search)'},
+  {id: 'semantic', name: 'Semantic layer'},
+  {id: 'malloy', name: 'Malloy'},
+];
+const CONTEXT_SHORT = {raw: 'No context', glossary: 'Glossary', glossary_search: 'Glossary search', semantic: 'Semantic', malloy: 'Malloy'};
+// Column order of the matrix grid: context, then harness.
+const COMBOS = CONTEXTS.flatMap((c) => [false, true].map((harness) => ({context: c.id, harness})));
+const cellId = (model, harness, context) => `${model}|${harness ? 'harness' : 'no-harness'}|${context}`;
+
+// Business-phrased questions. Expected SQL encodes the governed definitions from the semantic layer
+// (app/semantic/warehouse.yaml), so it is the company's "right answer", not just any plausible one.
+const SAMPLE_PROMPTS = [
+  {text: 'What was our net revenue in 2024?',
+   expected_sql: "SELECT SUM(o.subtotal_usd - least(coalesce(r.refund_usd, 0), o.subtotal_usd)) FROM marts.fct_orders o LEFT JOIN (SELECT order_id, SUM(refund_amount_usd) AS refund_usd FROM marts.fct_refunds GROUP BY 1) r USING (order_id) WHERE o.cancelled_at IS NULL AND o.order_date BETWEEN '2024-01-01' AND '2024-12-31'"},
+  {text: 'What was MRR at the end of June 2025, by plan?',
+   expected_sql: "SELECT plan_name, SUM(CASE WHEN billing_interval = 'year' THEN plan_amount_usd / 12 ELSE plan_amount_usd END) FROM marts.dim_subscriptions WHERE started_at < DATE '2025-07-01' AND (canceled_at IS NULL OR CAST(canceled_at AS DATE) > DATE '2025-06-30') GROUP BY 1"},
+  {text: 'How many active customers did we have in Q3 2025?',
+   expected_sql: "SELECT COUNT(DISTINCT customer_key) FROM marts.fct_orders WHERE cancelled_at IS NULL AND order_date BETWEEN '2025-07-01' AND '2025-09-30'"},
+  {text: 'Which ad platform had the lowest cost per click in Q2 2025, and what was it?'},
+  {text: 'How many urgent tickets came in during 2025, and what was our average first response time on them?'},
+  {text: 'How many Footwear units did we have available to sell at the end of September 2025?',
+   expected_sql: "SELECT SUM(i.qty_on_hand - i.qty_reserved) FROM marts.fct_inventory_snapshots i JOIN marts.dim_products p USING (product_id) WHERE i.snapshot_date = '2025-09-30' AND p.category = 'Footwear'"},
+  {text: 'How many customers have both placed an order and opened a support ticket?',
+   expected_sql: 'SELECT COUNT(DISTINCT o.customer_key) FROM marts.fct_orders o JOIN marts.fct_tickets t USING (customer_key)'},
+];
+const DEFAULT_RUBRIC = `PASS only if:
+- The query directly answers the question asked (correct grain, filters, time window, and aggregation).
+- Business terms follow the company's definitions: revenue is merchandise only (no shipping/tax), excludes cancelled
+  orders, and net revenue deducts refunds; MRR counts subscriptions active at month end with annual plans / 12;
+  active customers have a non-cancelled order in the period; first response = first PUBLIC agent reply.
+- It uses current sources (no deprecated tables) and treats inventory snapshots as point-in-time.
+- The returned rows are plausible for the question (not empty unless that is the correct answer).
+FAIL if the query answers a different question, misses a filter, or the explanation contradicts the query.`;
+
+let state = {cells: [], reports: {}, errors: {}, prompts: [], selected: null};
+
+function chip(group, value, label, checked) {
+  return `<label><input type="checkbox" name="${group}" value="${esc(value)}" class="peer sr-only" ${checked ? 'checked' : ''}>
+    <span class="block rounded-md border px-3 py-1.5 cursor-pointer select-none peer-checked:bg-slate-800 peer-checked:text-white peer-checked:border-slate-800">${esc(label)}</span></label>`;
+}
+const checkedValues = (group) => $$(`input[name=${group}]:checked`).map((i) => i.value);
+
+function addPrompt(p = {}) {
+  const node = $('#promptTpl').content.firstElementChild.cloneNode(true);
+  node.querySelector('.p-text').value = p.text || '';
+  node.querySelector('.p-sql').value = p.expected_sql || '';
+  node.querySelector('.p-remove').onclick = () => { node.remove(); updateCount(); };
+  node.querySelector('.p-text').oninput = updateCount;
+  $('#prompts').appendChild(node);
+  updateCount();
+}
+
+function readPrompts() {
+  return $$('.prompt-row')
+    .map((r) => ({text: r.querySelector('.p-text').value.trim(), expected_sql: r.querySelector('.p-sql').value.trim() || null}))
+    .filter((p) => p.text);
+}
+
+function updateCount() {
+  const cells = checkedValues('model').length * checkedValues('harness').length * checkedValues('context').length;
+  const n = readPrompts().length;
+  const runs = +$('#repeats').value;
+  $('#repeatsValue').textContent = runs;
+  const total = cells * n * runs;
+  $('#matrixCount').textContent = `${cells} cell${cells === 1 ? '' : 's'} × ${n} prompt${n === 1 ? '' : 's'}` +
+    `${runs > 1 ? ` × ${runs} runs` : ''} = ${total} agent runs (+ ${total} judge calls)`;
+  $('#harnessBox').classList.toggle('opacity-40', !checkedValues('harness').includes('true'));
+}
+
+async function init() {
+  $('#modelChoices').innerHTML = MODELS.map((m) => chip('model', m.id, m.name, m.checked)).join('');
+  $('#harnessChoices').innerHTML = chip('harness', 'false', 'Off', true) + chip('harness', 'true', 'On', true);
+  $('#contextChoices').innerHTML = CONTEXTS.map((c) => chip('context', c.id, c.name, true)).join('');
+  $('#judgeModel').innerHTML = MODELS.map((m) => `<option value="${m.id}" ${m.id === 'claude-haiku-5-5' ? 'selected' : ''}>${m.name}</option>`).join('');
+  $$('input[name=model], input[name=harness], input[name=context]').forEach((i) => i.onchange = updateCount);
+  $('#repeats').oninput = updateCount;
+
+  SAMPLE_PROMPTS.forEach(addPrompt);
+  $('#rubric').value = DEFAULT_RUBRIC;
+  const saved = store.get('apiKey');
+  if (saved) { $('#apiKey').value = saved; $('#rememberKey').checked = true; }
+  $('#workspaceId').value = store.get('workspaceId') || '';
+  $('#addPrompt').onclick = () => addPrompt();
+
+  const cfg = await fetch('/api/config').then((r) => r.json());
+  $('#schema').textContent = cfg.schema;
+  $('#tableCount').textContent = `(${cfg.table_count} tables)`;
+  $('#catalog').textContent = cfg.semantic_catalog;
+  $('#glossary').textContent = cfg.glossary;
+  $('#malloyModel').textContent = cfg.malloy_model;
+  $('#contextHelp').innerHTML = CONTEXTS.map((c) => `<span class="block"><b class="font-medium">${esc(c.name)}:</b> ${esc(cfg.contexts[c.id])}</span>`).join('');
+  $('#harnessList').innerHTML = Object.entries(cfg.harness_capabilities).map(([k, desc]) => `
+    <label class="flex items-start gap-2"><input type="checkbox" class="mt-1 harness-cap" value="${esc(k)}" checked>
+      <span>${esc(desc)}</span></label>`).join('');
+  updateCount();
+}
+
+$('#form').onsubmit = async (e) => {
+  e.preventDefault();
+  const apiKey = $('#apiKey').value.trim();
+  const workspaceId = $('#workspaceId').value.trim();
+  if ($('#rememberKey').checked) { store.set('apiKey', apiKey); store.set('workspaceId', workspaceId); }
+  else { store.del('apiKey'); store.del('workspaceId'); }
+
+  const prompts = readPrompts();
+  const body = {
+    api_key: apiKey,
+    workspace_id: workspaceId || null,
+    judge_model: $('#judgeModel').value,
+    models: checkedValues('model'),
+    harness_modes: checkedValues('harness').map((v) => v === 'true'),
+    context_modes: checkedValues('context'),
+    harness: $$('.harness-cap:checked').map((c) => c.value),
+    prompts,
+    rubric: $('#rubric').value,
+    repeats: +$('#repeats').value,
+  };
+  if (!prompts.length) return showStatus('Add at least one prompt.', 'error');
+  if (!body.models.length || !body.harness_modes.length || !body.context_modes.length)
+    return showStatus('Pick at least one option in each matrix dimension.', 'error');
+
+  state = {cells: [], repeats: body.repeats, currentRun: 0, runs: {}, errors: {}, prompts, selected: null, selectedRun: null};
+  $('#runBtn').disabled = true;
+  $('#detail').innerHTML = '';
+  $('#empty').classList.add('hidden');
+  const t0 = performance.now();
+  const elapsed = () => ((performance.now() - t0) / 1000).toFixed(1) + 's';
+  const progress = () => {
+    const done = Object.values(state.runs).reduce((n, r) => n + Object.keys(r).length, 0) + Object.keys(state.errors).length;
+    const run = state.repeats > 1 ? `Run ${state.currentRun || 1}/${state.repeats} · ` : '';
+    showStatus(`Running… ${run}${done}/${(state.cells.length * state.repeats) || '?'} cells done · ${elapsed()}`);
+  };
+  const timer = setInterval(progress, 200);
+  try {
+    const res = await fetch('/api/run', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(typeof data.detail === 'string' ? data.detail : JSON.stringify(data.detail ?? res.statusText));
+    }
+    await readNdjson(res, handleEvent);
+    clearInterval(timer);
+    const runs = state.repeats > 1 ? ` × ${state.repeats} runs` : '';
+    showStatus(`Done: ${state.cells.length} cells${runs} in ${elapsed()} (wall clock, including judging).`, 'ok');
+  } catch (err) {
+    clearInterval(timer);
+    showStatus(err.message, 'error');
+    if (!state.cells.length) $('#empty').classList.remove('hidden');
+  } finally {
+    $('#runBtn').disabled = false;
+  }
+};
+
+async function readNdjson(res, onEvent) {
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = '';
+  for (;;) {
+    const {value, done} = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, {stream: true});
+    let nl;
+    while ((nl = buf.indexOf('\n')) >= 0) {
+      const line = buf.slice(0, nl).trim();
+      buf = buf.slice(nl + 1);
+      if (line) onEvent(JSON.parse(line));
+    }
+  }
+}
+
+function handleEvent(ev) {
+  if (ev.type === 'plan') { state.cells = ev.cells; state.repeats = ev.repeats; }
+  else if (ev.type === 'run_start') state.currentRun = ev.run;
+  else if (ev.type === 'cell') (state.runs[ev.run] ??= {})[ev.report.id] = ev.report;
+  else if (ev.type === 'cell_error') state.errors[ev.id] = `Run ${ev.run}: ${ev.error}`;
+  else return;
+  renderMatrix();
+  renderPerPrompt();
+  if (ev.type !== 'cell') return;
+  if (!state.selected) selectCell(ev.report.id);
+  else if (state.selected === ev.report.id) selectCell(ev.report.id, state.selectedRun);  // refresh aggregate
+}
+
+// All finished reports for a cell, in run order.
+const reportsFor = (id) => Object.keys(state.runs).map(Number).sort((a, b) => a - b)
+  .map((run) => state.runs[run][id]).filter(Boolean);
+const mean = (xs) => xs.reduce((a, b) => a + b, 0) / Math.max(xs.length, 1);
+
+function aggregate(id) {
+  const rs = reportsFor(id);
+  if (!rs.length) return null;
+  const rates = rs.map((r) => r.pass_rate);
+  return {
+    n: rs.length,
+    pass_rate: mean(rates),
+    min: Math.min(...rates),
+    max: Math.max(...rates),
+    seconds: mean(rs.map((r) => r.total_seconds)),
+    tokens: mean(rs.map((r) => r.total_tokens)),
+    tool_calls: mean(rs.map((r) => r.tool_calls)),
+    ...consistency(rs),
+  };
+}
+
+// pass^k: share of prompts that passed in EVERY finished run. Flaky: passed in some runs but not all.
+function consistency(rs) {
+  const outcomes = state.prompts.map((_, i) => rs.map((r) => Boolean(r.cases[i]?.passed)));
+  return {
+    pass_k: outcomes.filter((xs) => xs.every(Boolean)).length / Math.max(outcomes.length, 1),
+    flaky: outcomes.flatMap((xs, i) => (xs.some(Boolean) && !xs.every(Boolean) ? [i] : [])),
+  };
+}
+
+// What "best" means: with repeats, consistent accuracy (pass^k); with one run, the pass rate.
+const score = (a) => (state.repeats > 1 ? a.pass_k : a.pass_rate);
+
+function showStatus(msg, kind) {
+  const el = $('#status');
+  el.classList.remove('hidden', 'border-red-300', 'bg-red-50', 'border-emerald-300', 'bg-emerald-50');
+  if (kind === 'error') el.classList.add('border-red-300', 'bg-red-50');
+  if (kind === 'ok') el.classList.add('border-emerald-300', 'bg-emerald-50');
+  el.textContent = msg;
+}
+
+const fmtS = (s) => (s ?? 0).toFixed(1) + 's';
+const pct = (x) => Math.round(x * 100) + '%';
+const comboLabel = (c) => `${CONTEXT_SHORT[c.context]} · ${c.harness ? 'harness' : 'no harness'}`;
+// Red (0%) → amber → green (100%), light tint so text stays readable.
+const passTint = (rate) => `hsl(${Math.round(rate * 130)}, 70%, 90%)`;
+
+function planDims() {
+  const models = [...new Set(state.cells.map((c) => c.model))];
+  const combos = COMBOS.filter((k) => state.cells.some((c) => c.harness_on === k.harness && c.context === k.context));
+  return {models, combos};
+}
+
+function renderMatrix() {
+  const {models, combos} = planDims();
+  const best = Math.max(0, ...state.cells.map((c) => { const a = aggregate(c.id); return a ? score(a) : 0; }));
+  const head = `<tr><th></th>${combos.map((c) =>
+    `<th class="text-xs font-medium text-slate-500 px-2 pb-1 text-left">${comboLabel(c)}</th>`).join('')}</tr>`;
+  const rows = models.map((m) => `<tr>
+    <th class="text-left font-medium pr-3 whitespace-nowrap">${esc(modelName(m))}</th>
+    ${combos.map((c) => renderCell(cellId(m, c.harness, c.context), best)).join('')}
+  </tr>`).join('');
+  $('#matrix').innerHTML = head + rows;
+  $('#matrixWrap').classList.remove('hidden');
+  $$('#matrix [data-cell]').forEach((b) => b.onclick = () => selectCell(b.dataset.cell));
+}
+
+const spinner = '<span class="inline-block w-3 h-3 rounded-full border-2 border-slate-300 border-t-indigo-500 animate-spin"></span>';
+
+function renderCell(id, best) {
+  const a = aggregate(id);
+  const ring = state.selected === id ? 'ring-2 ring-indigo-500' : '';
+  const err = state.errors[id] ? `<div class="mt-1 text-[11px] text-red-700 break-words">${esc(state.errors[id])}</div>` : '';
+  if (!a) {
+    return err ? `<td><div class="rounded-lg bg-red-50 border border-red-200 p-3 text-xs">${err}</div></td>`
+      : `<td><div class="rounded-lg border border-dashed p-3 text-slate-400 text-xs flex items-center gap-2 min-h-[84px]">${spinner}running…</div></td>`;
+  }
+  const multi = state.repeats > 1;
+  const star = score(a) === best && best > 0 ? ` <span title="Best ${multi ? 'pass^k' : 'pass rate'}">★</span>` : '';
+  const range = multi && a.n > 1 ? ` <span class="text-xs font-normal text-slate-600" title="Min–max pass rate across runs">${pct(a.min)}–${pct(a.max)}</span>` : '';
+  const runs = multi ? `<div class="text-xs tabular-nums mt-0.5"><b title="Share of prompts that passed in every run">pass^k ${pct(a.pass_k)}</b>` +
+    `${a.flaky.length ? ` · <span class="text-amber-700">${a.flaky.length} flaky</span>` : ''}</div>` +
+    `<div class="text-[11px] text-slate-500 flex items-center gap-1">${a.n < state.repeats ? spinner : ''}${a.n}/${state.repeats} runs · mean shown</div>` : '';
+  const counts = multi ? '' : (() => { const r = reportsFor(id)[0]; return ` <span class="text-xs font-normal text-slate-600">${r.passed}/${r.total}</span>`; })();
+  return `<td><button type="button" data-cell="${esc(id)}" class="w-full text-left rounded-lg border p-3 hover:shadow ${ring}" style="background:${passTint(a.pass_rate)}">
+    <div class="text-xl font-semibold tabular-nums">${pct(a.pass_rate)}${star}${counts}${range}</div>
+    <div class="text-xs text-slate-600 tabular-nums">${fmtS(a.seconds)} · ${Math.round(a.tokens).toLocaleString()} tok · ${+a.tool_calls.toFixed(1)} tools</div>
+    ${runs}${err}
+  </button></td>`;
+}
+
+function renderPerPrompt() {
+  const {models, combos} = planDims();
+  const cols = models.flatMap((m) => combos.map((c) => ({id: cellId(m, c.harness, c.context), m, c})));
+  const head = `<tr><th class="text-left font-medium text-slate-500 px-2 py-1">Prompt</th>${cols.map(({m, c}) =>
+    `<th class="font-medium text-slate-500 px-2 py-1 text-center whitespace-nowrap">${esc(modelName(m))}<br><span class="font-normal">${comboLabel(c)}</span></th>`).join('')}</tr>`;
+  const rows = state.prompts.map((p, i) => `<tr class="border-t">
+    <td class="px-2 py-1 max-w-[280px]">${esc(p.text)}</td>
+    ${cols.map(({id}) => {
+      const cases = reportsFor(id).map((r) => r.cases[i]).filter(Boolean);
+      if (!cases.length) return '<td class="px-2 py-1 text-center"><span class="text-slate-300">·</span></td>';
+      if (state.repeats === 1) return `<td class="px-2 py-1 text-center">${cases[0].passed ? '✅' : '❌'}</td>`;
+      const k = cases.filter((c) => c.passed).length;
+      return `<td class="px-2 py-1 text-center tabular-nums font-medium rounded" style="background:${passTint(k / cases.length)}"
+        title="Passed in ${k} of ${cases.length} runs">${k}/${cases.length}</td>`;
+    }).join('')}
+  </tr>`).join('');
+  $('#perPrompt').innerHTML = head + rows;
+  $('#perPromptWrap').classList.remove('hidden');
+}
+
+function selectCell(id, run = null) {
+  state.selected = id;
+  renderMatrix();
+  const rs = reportsFor(id);
+  if (!rs.length) { $('#detail').innerHTML = ''; return; }
+  const r = rs.find((x) => x.run === run) ?? rs[rs.length - 1];
+  state.selectedRun = r.run;
+  $('#detail').innerHTML = (state.repeats > 1 ? renderRunSummary(id, rs, r.run) : '') + renderReport(r);
+  $$('#detail [data-run]').forEach((b) => b.onclick = () => selectCell(id, +b.dataset.run));
+}
+
+function renderRunSummary(id, rs, activeRun) {
+  const a = aggregate(id);
+  const sd = Math.sqrt(mean(rs.map((r) => (r.pass_rate - a.pass_rate) ** 2)));
+  const tabs = rs.map((r) => `<button type="button" data-run="${r.run}"
+    class="rounded-md border px-2.5 py-1 text-xs tabular-nums ${r.run === activeRun ? 'bg-slate-800 text-white border-slate-800' : 'hover:bg-slate-50'}">
+    Run ${r.run} · ${pct(r.pass_rate)}</button>`).join('');
+  return `
+  <section class="bg-white rounded-xl shadow-sm border p-4 mb-4">
+    <p class="text-xs uppercase tracking-wide text-slate-400 mb-2">Across ${a.n} of ${state.repeats} runs</p>
+    <div class="grid grid-cols-2 md:grid-cols-6 gap-2 mb-3">
+      ${stat('pass^k', pct(a.pass_k))}
+      ${stat('Mean pass rate', pct(a.pass_rate))}
+      ${stat('Range', `${pct(a.min)}–${pct(a.max)}`)}
+      ${stat('Std dev', (sd * 100).toFixed(1) + ' pts')}
+      ${stat('Mean cell time', fmtS(a.seconds))}
+      ${stat('Mean tokens', Math.round(a.tokens).toLocaleString())}
+    </div>
+    ${a.flaky.length ? `<p class="text-xs text-amber-800 bg-amber-50 rounded-md p-2 mb-3"><b>Flaky prompts</b> (passed in some runs, not all): ${a.flaky.map((i) => esc(state.prompts[i].text)).join(' · ')}</p>` : ''}
+    <div class="flex flex-wrap gap-2">${tabs}</div>
+  </section>`;
+}
+
+function stat(label, value) {
+  return `<div class="rounded-lg bg-slate-50 border px-3 py-2"><div class="text-[11px] uppercase tracking-wide text-slate-400">${label}</div><div class="text-lg font-semibold tabular-nums">${value}</div></div>`;
+}
+
+function renderReport(r) {
+  return `
+  <section class="bg-white rounded-xl shadow-sm border p-4 min-w-0">
+    <div class="flex items-baseline justify-between mb-1">
+      <h2 class="text-lg font-semibold">${esc(modelName(r.model))} · ${comboLabel({harness: r.harness_on, context: r.context})}${state.repeats > 1 ? ` · run ${r.run}` : ''}</h2>
+    </div>
+    ${r.harness.length ? `<p class="text-xs text-slate-500 mb-3">Capabilities: ${r.harness.map(esc).join(', ')}</p>` : '<div class="mb-3"></div>'}
+    <div class="grid grid-cols-3 md:grid-cols-6 gap-2 mb-4">
+      ${stat('Pass rate', `${pct(r.pass_rate)} <span class="text-sm font-normal text-slate-500">(${r.passed}/${r.total})</span>`)}
+      ${stat('Cell time', fmtS(r.total_seconds))}
+      ${stat('Avg / prompt', fmtS(r.avg_case_seconds))}
+      ${stat('Tokens', r.total_tokens.toLocaleString())}
+      ${stat('Requests', r.requests)}
+      ${stat('Tool calls', r.tool_calls)}
+      ${r.context === 'glossary_search' ? stat('Glossary searches', r.glossary_searches) : ''}
+    </div>
+    <div class="grid xl:grid-cols-2 gap-3">${r.cases.map((c) => renderCase(c, r.context)).join('')}</div>
+  </section>`;
+}
+
+function renderCase(c, context) {
+  const badge = c.passed
+    ? '<span class="shrink-0 rounded-full bg-emerald-100 text-emerald-700 text-xs font-semibold px-2 py-0.5">PASS</span>'
+    : '<span class="shrink-0 rounded-full bg-red-100 text-red-700 text-xs font-semibold px-2 py-0.5">FAIL</span>';
+  const checks = Object.entries(c.checks || {}).map(([name, v]) => `
+    <li class="flex gap-2"><span>${v.passed ? '✅' : '❌'}</span><span><b class="font-medium">${esc(name)}</b>${v.reason ? ` — <span class="text-slate-600">${esc(v.reason)}</span>` : ''}</span></li>`).join('');
+  const meta = c.seconds != null
+    ? `${fmtS(c.seconds)} · ${((c.input_tokens || 0) + (c.output_tokens || 0)).toLocaleString()} tok · ${c.requests ?? 0} req · ${c.tool_calls ?? 0} tool calls` +
+      (context === 'glossary_search' ? ` · ${c.glossary_searches ?? 0} glossary searches` : '')
+    : '';
+  return `
+  <article class="rounded-lg border ${c.passed ? 'border-emerald-200' : 'border-red-200'} p-3 min-w-0">
+    <div class="flex items-start gap-2">
+      ${badge}
+      <div class="min-w-0 flex-1">
+        <p class="text-sm font-medium">${esc(c.prompt)}</p>
+        <p class="text-xs text-slate-400 tabular-nums">${meta}</p>
+      </div>
+    </div>
+    ${c.error ? `<p class="mt-2 text-xs text-red-700 bg-red-50 rounded p-2 font-mono break-words">${esc(c.error)}</p>` : ''}
+    <ul class="mt-2 text-xs space-y-1">${checks}</ul>
+    ${c.sql ? `
+    <details class="mt-2">
+      <summary class="text-xs text-indigo-600 cursor-pointer">Query &amp; results</summary>
+      ${c.malloy_query ? `<p class="mt-2 text-[11px] uppercase tracking-wide text-slate-400">Malloy query</p>
+        <pre class="text-xs bg-emerald-950 text-emerald-100 rounded-md p-3 overflow-x-auto">${esc(c.malloy_query)}</pre>
+        <p class="mt-2 text-[11px] uppercase tracking-wide text-slate-400">Compiled SQL</p>` : ''}
+      ${c.semantic_query ? `<p class="mt-2 text-[11px] uppercase tracking-wide text-slate-400">Semantic query</p>
+        <pre class="text-xs bg-indigo-950 text-indigo-100 rounded-md p-3 overflow-x-auto">${esc(JSON.stringify(c.semantic_query, null, 2))}</pre>
+        <p class="mt-2 text-[11px] uppercase tracking-wide text-slate-400">Compiled SQL</p>` : ''}
+      <pre class="mt-2 text-xs bg-slate-900 text-slate-100 rounded-md p-3 overflow-x-auto">${esc(c.sql)}</pre>
+      ${c.explanation ? `<p class="mt-2 text-xs text-slate-600">${esc(c.explanation)}</p>` : ''}
+      ${c.expected_sql ? `<p class="mt-2 text-[11px] uppercase tracking-wide text-slate-400">Expected</p><pre class="text-xs bg-slate-100 rounded-md p-2 overflow-x-auto">${esc(c.expected_sql)}</pre>` : ''}
+      ${c.rows ? renderRows(c.rows) : ''}
+    </details>` : ''}
+  </article>`;
+}
+
+function renderRows({columns, rows, row_count}) {
+  return `
+  <div class="mt-2 overflow-x-auto">
+    <table class="text-xs w-full">
+      <thead><tr>${columns.map((c) => `<th class="text-left font-medium text-slate-500 border-b px-2 py-1">${esc(c)}</th>`).join('')}</tr></thead>
+      <tbody>${rows.map((r) => `<tr>${r.map((v) => `<td class="border-b px-2 py-1 tabular-nums">${esc(v)}</td>`).join('')}</tr>`).join('')}</tbody>
+    </table>
+    ${row_count > rows.length ? `<p class="text-[11px] text-slate-400 mt-1">Showing ${rows.length} of ${row_count} rows</p>` : ''}
+  </div>`;
+}
+
+init();
+</script>
+</body>
+</html>

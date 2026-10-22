@@ -1,0 +1,18 @@
+[project]
+name = "evaltest"
+version = "0.1.0"
+description = "Text-to-SQL eval playground: Pydantic Evals + Pydantic AI Harness over DuckDB"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi",
+    "uvicorn",
+    "duckdb",
+    "pydantic-ai-slim[anthropic]",
+    "anthropic<2",  # anthropic 2.x made BetaMessageParam a Union, which pydantic-ai 2.59 cannot instantiate
+    "pydantic-evals",
+    "pydantic-ai-harness",
+    "pyyaml",
+]
+
+[tool.uv]
+package = false

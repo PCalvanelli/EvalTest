@@ -1,0 +1,188 @@
+// Malloy semantic model over the marts schema.
+// Same governed business definitions as app/semantic/warehouse.yaml (net revenue, MRR, active customers,
+// first response time, customer segment, ...), modeled idiomatically: sources are joined, so a query can
+// cross domains (e.g. customers -> orders and tickets), nest results, and compute ad-hoc expressions.
+// All money is USD. Test orders are already excluded from orders.
+
+// ─────────────────────────── Customers (shared dimension) ───────────────────────────
+
+// One row per person, resolved across store, billing, support and CRM.
+source: customer is duckdb.sql("""
+  SELECT c.*,
+         c.customer_key IN (SELECT customer_key FROM marts.dim_subscriptions WHERE customer_key IS NOT NULL) AS is_member
+  FROM marts.dim_customers c
+""") extend {
+  primary_key: customer_key
+
+  dimension:
+    customer_name is concat(first_name, ' ', last_name)
+    // wholesale (store wholesale tag), member (has ever held a membership), retail (everyone else)
+    customer_segment is
+      pick 'wholesale' when is_wholesale
+      pick 'member' when is_member
+      else 'retail'
+    // organic_search, paid_search, paid_social, email_marketing, direct_traffic, referrals, unknown
+    acquisition_source is coalesce(hubspot_original_source, 'unknown')
+
+  measure: customer_count is count()
+}
+
+// ─────────────────────────── Sales ───────────────────────────
+
+// One row per order. refund_usd = total refunded on the order; is_first_order = the customer's earliest order.
+source: orders is duckdb.sql("""
+  SELECT o.*,
+         coalesce(r.refund_usd, 0) AS refund_usd,
+         row_number() OVER (PARTITION BY o.shopify_customer_id ORDER BY o.created_at) = 1 AS is_first_order
+  FROM marts.fct_orders o
+  LEFT JOIN (SELECT order_id, SUM(refund_amount_usd) AS refund_usd FROM marts.fct_refunds GROUP BY 1) r USING (order_id)
+""") extend {
+  primary_key: order_id
+  join_one: customer with customer_key
+
+  dimension:
+    // completed, pending, refunded, partially_refunded, cancelled
+    order_status is
+      pick 'cancelled' when cancelled_at is not null
+      pick 'refunded' when financial_status = 'refunded'
+      pick 'partially_refunded' when financial_status = 'partially_refunded'
+      pick 'pending' when financial_status = 'pending'
+      else 'completed'
+    is_cancelled is cancelled_at is not null
+    // refunded merchandise value, capped at the order subtotal
+    merchandise_refund_usd is least(refund_usd, subtotal_usd)
+
+  measure:
+    // Number of orders, INCLUDING cancelled ones.
+    order_count is count()
+    // Merchandise after discounts, excluding cancelled orders. Before refunds; no shipping or tax.
+    gross_revenue is subtotal_usd.sum() { where: cancelled_at is null }
+    // Refunded merchandise value (capped at the order subtotal), excluding cancelled orders.
+    refunds is merchandise_refund_usd.sum() { where: cancelled_at is null }
+    // Gross revenue minus refunds, excluding cancelled orders. The company's standard revenue metric.
+    net_revenue is sum(subtotal_usd - merchandise_refund_usd) { where: cancelled_at is null }
+    // Net revenue per non-cancelled order.
+    avg_order_value is net_revenue / count() { where: cancelled_at is null }
+    // Distinct customers with at least one non-cancelled order.
+    active_customers is count(customer_key) { where: cancelled_at is null }
+}
+
+source: products is duckdb.table('marts.dim_products') extend {
+  primary_key: product_id
+}
+
+// One row per order line. Sales measures exclude lines on cancelled orders.
+source: order_lines is duckdb.table('marts.fct_order_lines') extend {
+  primary_key: order_line_id
+  join_one: orders with order_id
+  join_one: products with product_id
+
+  measure:
+    units_sold is quantity.sum() { where: orders.cancelled_at is null }
+    // Line amounts after discounts, before refunds.
+    product_revenue is line_amount_usd.sum() { where: orders.cancelled_at is null }
+}
+
+// ─────────────────────────── Membership ───────────────────────────
+
+// One row per membership subscription.
+source: memberships is duckdb.table('marts.dim_subscriptions') extend {
+  primary_key: subscription_id
+  join_one: customer with customer_key
+  measure: membership_count is count()
+}
+
+// Each subscription evaluated at every month end (2024-01 .. 2025-09). as_of_month is the first day of the
+// month (e.g. @2025-06-01); values are as of that month's last day. Point-in-time: always filter or group by
+// as_of_month; never sum MRR or active counts across months.
+source: subscription_months is duckdb.sql("""
+  SELECT m.month_start AS as_of_month,
+         s.*,
+         s.canceled_at IS NULL OR CAST(s.canceled_at AS DATE) > last_day(m.month_start) AS active_at_month_end,
+         date_trunc('month', s.started_at) = m.month_start AS started_in_month,
+         s.canceled_at IS NOT NULL AND date_trunc('month', s.canceled_at) = m.month_start AS canceled_in_month
+  FROM marts.dim_subscriptions s
+  JOIN (SELECT DISTINCT month_start FROM marts.dim_date WHERE month_start BETWEEN DATE '2024-01-01' AND DATE '2025-09-01') m
+    ON m.month_start >= date_trunc('month', s.started_at)
+   AND (s.canceled_at IS NULL OR m.month_start <= date_trunc('month', s.canceled_at))
+""") extend {
+  join_one: customer with customer_key
+
+  dimension:
+    // monthly price: monthly plans as-is, annual plans / 12
+    monthly_price_usd is pick plan_amount_usd / 12 when billing_interval = 'year' else plan_amount_usd
+
+  measure:
+    // Monthly recurring revenue at month end: memberships still active on the last day of the month.
+    mrr is monthly_price_usd.sum() { where: active_at_month_end }
+    active_subscriptions is count() { where: active_at_month_end }
+    new_subscriptions is count() { where: started_in_month }
+    churned_subscriptions is count() { where: canceled_in_month }
+}
+
+// ─────────────────────────── Customer support ───────────────────────────
+
+// One row per ticket. first_reply_hours = hours to the first PUBLIC agent reply (internal notes don't count).
+source: tickets is duckdb.sql("""
+  SELECT t.*,
+         CAST(t.created_at AS DATE) AS created_date,
+         fr.first_reply_at,
+         date_diff('minute', t.created_at, fr.first_reply_at) / 60.0 AS first_reply_hours,
+         date_diff('minute', t.created_at, t.solved_at) / 60.0 AS resolution_hours
+  FROM marts.fct_tickets t
+  LEFT JOIN (
+    SELECT ticket_id, MIN(created_at) AS first_reply_at
+    FROM marts.fct_ticket_comments
+    WHERE is_public AND author_role = 'agent'
+    GROUP BY 1
+  ) fr USING (ticket_id)
+""") extend {
+  primary_key: ticket_id
+  join_one: customer with customer_key
+
+  measure:
+    ticket_count is count()
+    solved_tickets is count() { where: status = 'solved' | 'closed' }
+    // Mean hours to first public agent reply, over tickets with a reply.
+    avg_first_reply_hours is first_reply_hours.avg()
+    // Mean hours from creation to solved, over solved tickets.
+    avg_resolution_hours is resolution_hours.avg()
+}
+
+// ─────────────────────────── Marketing ───────────────────────────
+
+// Daily stats per campaign; platform is google_ads or facebook_ads.
+source: ad_stats is duckdb.table('marts.fct_ad_stats') extend {
+  dimension: activity_date is `date`
+
+  measure:
+    ad_spend is cost_usd.sum()
+    total_clicks is clicks.sum()
+    total_impressions is impressions.sum()
+    cost_per_click is ad_spend / nullif(total_clicks, 0)
+    click_through_rate is total_clicks / nullif(total_impressions, 0)
+}
+
+// ─────────────────────────── Inventory ───────────────────────────
+
+// End-of-day stock per warehouse and product (2025 only). Semi-additive: filter to ONE snapshot_date.
+source: inventory is duckdb.table('marts.fct_inventory_snapshots') extend {
+  join_one: products with product_id
+
+  measure:
+    units_on_hand is qty_on_hand.sum()
+    units_reserved is qty_reserved.sum()
+    // Units available to sell: on hand minus reserved.
+    units_available is sum(qty_on_hand - qty_reserved)
+}
+
+// ─────────────────────────── Customer hub (cross-domain) ───────────────────────────
+
+// Start here for questions that span domains, e.g. customers who both ordered and opened a ticket.
+// Measures from joined sources (orders.net_revenue, tickets.ticket_count, ...) stay correct across the
+// one-to-many joins (Malloy symmetric aggregates).
+source: customers is customer extend {
+  join_many: orders on customer_key = orders.customer_key
+  join_many: tickets on customer_key = tickets.customer_key
+  join_many: memberships on customer_key = memberships.customer_key
+}

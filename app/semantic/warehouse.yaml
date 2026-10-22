@@ -1,0 +1,160 @@
+# Semantic layer: the governed business definitions (revenue, MRR, churn, active customers, response
+# times, segments). The marts hold only cleaned entities/events; every metric is defined here.
+# `from` may be a table or a SQL subquery (like a MetricFlow/Cube derived model). Each query targets one model.
+
+# Shared dimension definitions, reused below via YAML anchors.
+_shared:
+  customer_segment: &customer_segment
+    sql: "CASE WHEN c.is_wholesale THEN 'wholesale' WHEN c.customer_key IN (SELECT customer_key FROM marts.dim_subscriptions) THEN 'member' ELSE 'retail' END"
+    description: "wholesale (Shopify wholesale tag), member (has ever held a membership subscription), retail (everyone else)."
+  acquisition_source: &acquisition_source
+    sql: "coalesce(c.hubspot_original_source, 'unknown')"
+    description: "organic_search, paid_search, paid_social, email_marketing, direct_traffic, referrals, unknown."
+  customer_country: &customer_country
+    sql: "c.country_code"
+    description: "Two-letter country code, e.g. US, DE."
+
+models:
+  orders:
+    description: >
+      Shopify orders (test orders excluded), USD. Revenue metrics follow finance's definition: merchandise only
+      (no shipping or tax), cancelled orders excluded, refunds deducted for net revenue.
+    from: |
+      (
+        SELECT o.*,
+               coalesce(r.refund_usd, 0) AS refund_usd,
+               row_number() OVER (PARTITION BY o.shopify_customer_id ORDER BY o.created_at) = 1 AS is_first_order
+        FROM marts.fct_orders o
+        LEFT JOIN (SELECT order_id, SUM(refund_amount_usd) AS refund_usd FROM marts.fct_refunds GROUP BY 1) r USING (order_id)
+      ) o
+    joins:
+      - LEFT JOIN marts.dim_customers c ON c.customer_key = o.customer_key
+    measures:
+      order_count: {sql: "COUNT(*)", description: "Number of orders, including cancelled ones (use the valid_orders segment to exclude them)."}
+      gross_revenue: {sql: "SUM(o.subtotal_usd) FILTER (WHERE o.cancelled_at IS NULL)", description: "Merchandise subtotal after discounts, USD, excluding cancelled orders. Before refunds; no shipping or tax."}
+      refunds: {sql: "SUM(least(o.refund_usd, o.subtotal_usd)) FILTER (WHERE o.cancelled_at IS NULL)", description: "Refunded merchandise value, USD (capped at the order subtotal), excluding cancelled orders."}
+      net_revenue: {sql: "SUM(o.subtotal_usd - least(o.refund_usd, o.subtotal_usd)) FILTER (WHERE o.cancelled_at IS NULL)", description: "Gross revenue minus refunds, USD, excluding cancelled orders. The company's standard revenue metric."}
+      avg_order_value: {sql: "SUM(o.subtotal_usd - least(o.refund_usd, o.subtotal_usd)) FILTER (WHERE o.cancelled_at IS NULL) / NULLIF(COUNT(*) FILTER (WHERE o.cancelled_at IS NULL), 0)", description: "Net revenue per non-cancelled order, USD."}
+      active_customers: {sql: "COUNT(DISTINCT o.customer_key) FILTER (WHERE o.cancelled_at IS NULL)", description: "Distinct customers with at least one non-cancelled order in the period."}
+    dimensions:
+      order_date: {sql: "o.order_date", type: time, description: "Order date (UTC), 2024-01 to 2025-09."}
+      order_status: {sql: "CASE WHEN o.cancelled_at IS NOT NULL THEN 'cancelled' WHEN o.financial_status = 'refunded' THEN 'refunded' WHEN o.financial_status = 'partially_refunded' THEN 'partially_refunded' WHEN o.financial_status = 'pending' THEN 'pending' ELSE 'completed' END", description: "completed, pending, refunded, partially_refunded, cancelled."}
+      sales_channel: {sql: "o.sales_channel", description: "web, pos, mobile_app."}
+      currency: {sql: "o.currency", description: "Original order currency (USD, EUR, GBP)."}
+      is_first_order: {sql: "o.is_first_order", description: "TRUE for a customer's first order."}
+      customer_key: {sql: "o.customer_key", description: "Customer surrogate key."}
+      customer_email: {sql: "c.email", description: "Customer email."}
+      customer_name: {sql: "c.first_name || ' ' || c.last_name", description: "Customer full name (not unique)."}
+      customer_country: *customer_country
+      customer_segment: *customer_segment
+      acquisition_source: *acquisition_source
+    segments:
+      valid_orders: {sql: "o.cancelled_at IS NULL", description: "Excludes cancelled orders."}
+
+  order_lines:
+    description: Order line items with products, USD. Use for product and category questions. Cancelled orders are excluded from the sales metrics.
+    from: marts.fct_order_lines l
+    joins:
+      - JOIN marts.fct_orders o ON o.order_id = l.order_id
+      - JOIN marts.dim_products p ON p.product_id = l.product_id
+    measures:
+      units_sold: {sql: "SUM(l.quantity) FILTER (WHERE o.cancelled_at IS NULL)", description: "Units sold on non-cancelled orders."}
+      product_revenue: {sql: "SUM(l.line_amount_usd) FILTER (WHERE o.cancelled_at IS NULL)", description: "Line amounts after discounts on non-cancelled orders, USD, before refunds."}
+      order_count: {sql: "COUNT(DISTINCT l.order_id) FILTER (WHERE o.cancelled_at IS NULL)", description: "Distinct non-cancelled orders containing the product(s)."}
+    dimensions:
+      order_date: {sql: "l.order_date", type: time, description: "Order date."}
+      product_name: {sql: "p.product_name", description: "Product name."}
+      product_category: {sql: "p.category", description: "Footwear, Apparel, Accessories, Bags, Gear."}
+      vendor: {sql: "p.vendor", description: "Brand / vendor."}
+
+  subscriptions:
+    description: >
+      Membership subscriptions evaluated at each month end (grain: subscription × month, 2024-01 to 2025-09).
+      MRR and active counts are point-in-time: filter or group by month, never sum across months.
+    from: |
+      (
+        SELECT m.month_start AS month,
+               s.*,
+               s.canceled_at IS NULL OR CAST(s.canceled_at AS DATE) > last_day(m.month_start) AS active_at_month_end,
+               date_trunc('month', s.started_at) = m.month_start AS started_in_month,
+               s.canceled_at IS NOT NULL AND date_trunc('month', s.canceled_at) = m.month_start AS canceled_in_month
+        FROM marts.dim_subscriptions s
+        JOIN (SELECT DISTINCT month_start FROM marts.dim_date WHERE month_start BETWEEN DATE '2024-01-01' AND DATE '2025-09-01') m
+          ON m.month_start >= date_trunc('month', s.started_at)
+         AND (s.canceled_at IS NULL OR m.month_start <= date_trunc('month', s.canceled_at))
+      ) s
+    joins:
+      - LEFT JOIN marts.dim_customers c ON c.customer_key = s.customer_key
+    measures:
+      mrr: {sql: "SUM(CASE WHEN s.active_at_month_end THEN CASE WHEN s.billing_interval = 'year' THEN s.plan_amount_usd / 12 ELSE s.plan_amount_usd END ELSE 0 END)", description: "Monthly recurring revenue at month end, USD: monthly plan price, or annual price / 12, for subscriptions still active at month end."}
+      active_subscriptions: {sql: "COUNT(*) FILTER (WHERE s.active_at_month_end)", description: "Subscriptions active at month end (past_due counts as active)."}
+      new_subscriptions: {sql: "COUNT(*) FILTER (WHERE s.started_in_month)", description: "Subscriptions started during the month."}
+      churned_subscriptions: {sql: "COUNT(*) FILTER (WHERE s.canceled_in_month)", description: "Subscriptions canceled during the month."}
+    dimensions:
+      month: {sql: "s.month", type: time, description: "Month (first day, e.g. '2025-06-01'); values are as of that month's end."}
+      plan_name: {sql: "s.plan_name", description: "Basic Monthly, Pro Monthly, Basic Annual, Pro Annual."}
+      billing_interval: {sql: "s.billing_interval", description: "month or year."}
+      customer_country: *customer_country
+
+  support:
+    description: Zendesk support tickets with service-level metrics.
+    from: |
+      (
+        SELECT t.*,
+               fr.first_reply_at,
+               date_diff('minute', t.created_at, fr.first_reply_at) / 60.0 AS first_reply_hours,
+               date_diff('minute', t.created_at, t.solved_at) / 60.0 AS resolution_hours
+        FROM marts.fct_tickets t
+        LEFT JOIN (
+          SELECT ticket_id, MIN(created_at) AS first_reply_at
+          FROM marts.fct_ticket_comments
+          WHERE is_public AND author_role = 'agent'
+          GROUP BY 1
+        ) fr USING (ticket_id)
+      ) t
+    joins:
+      - LEFT JOIN marts.dim_customers c ON c.customer_key = t.customer_key
+    measures:
+      ticket_count: {sql: "COUNT(*)", description: "Number of tickets."}
+      solved_tickets: {sql: "COUNT(*) FILTER (WHERE t.status IN ('solved', 'closed'))", description: "Tickets in solved or closed status."}
+      avg_first_reply_hours: {sql: "AVG(t.first_reply_hours)", description: "Mean hours from creation to the first PUBLIC agent reply (internal notes don't count), over tickets with a reply."}
+      avg_resolution_hours: {sql: "AVG(t.resolution_hours)", description: "Mean hours from creation to solved, over solved tickets."}
+    dimensions:
+      created_date: {sql: "CAST(t.created_at AS DATE)", type: time, description: "Ticket creation date."}
+      priority: {sql: "t.priority", description: "low, normal, high, urgent."}
+      channel: {sql: "t.channel", description: "email, web, chat, phone."}
+      status: {sql: "t.status", description: "new, open, pending, solved, closed."}
+      subject: {sql: "t.subject", description: "Ticket subject line."}
+      customer_segment: *customer_segment
+
+  marketing:
+    description: Paid media across Google Ads and Facebook Ads, USD.
+    from: marts.fct_ad_stats m
+    joins: []
+    measures:
+      ad_spend: {sql: "SUM(m.cost_usd)", description: "Ad spend, USD."}
+      clicks: {sql: "SUM(m.clicks)", description: "Clicks."}
+      impressions: {sql: "SUM(m.impressions)", description: "Impressions."}
+      cost_per_click: {sql: "SUM(m.cost_usd) / NULLIF(SUM(m.clicks), 0)", description: "Ad spend divided by clicks, USD."}
+      click_through_rate: {sql: "SUM(m.clicks) / NULLIF(SUM(m.impressions), 0)", description: "Clicks divided by impressions."}
+    dimensions:
+      date: {sql: "m.date", type: time, description: "Activity date."}
+      platform: {sql: "m.platform", description: "google_ads or facebook_ads."}
+      campaign_name: {sql: "m.campaign_name", description: "Campaign name."}
+
+  inventory:
+    description: >
+      End-of-day stock per warehouse and product (2025 only). Quantities are semi-additive: always filter
+      to a single snapshot_date (or group by it). Never sum across dates.
+    from: marts.fct_inventory_snapshots i
+    joins:
+      - JOIN marts.dim_products p ON p.product_id = i.product_id
+    measures:
+      units_on_hand: {sql: "SUM(i.qty_on_hand)", description: "Units physically in stock."}
+      units_reserved: {sql: "SUM(i.qty_reserved)", description: "Units allocated to open orders."}
+      units_available: {sql: "SUM(i.qty_on_hand - i.qty_reserved)", description: "Units available to sell: on hand minus reserved."}
+    dimensions:
+      snapshot_date: {sql: "i.snapshot_date", type: time, description: "Snapshot date, 2025-01-01 to 2025-09-30."}
+      warehouse_code: {sql: "i.warehouse_code", description: "NJ1 (Newark), NV1 (Reno), NL1 (Rotterdam)."}
+      product_name: {sql: "p.product_name", description: "Product name."}
+      product_category: {sql: "p.category", description: "Footwear, Apparel, Accessories, Bags, Gear."}
