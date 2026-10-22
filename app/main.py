@@ -27,7 +27,7 @@ from .pricing import PRICES_AS_OF, PRICING  # noqa: E402
 STATIC = Path(__file__).resolve().parent.parent / 'static'
 MAX_CONCURRENT_AGENT_RUNS = 6
 
-app = FastAPI(title='Text-to-SQL Eval Playground')
+app = FastAPI(title='Semantic Layer Bench')
 app.include_router(history.router)
 
 

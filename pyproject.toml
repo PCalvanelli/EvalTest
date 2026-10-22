@@ -1,7 +1,7 @@
 [project]
-name = "evaltest"
+name = "semantic-layer-bench"
 version = "0.1.0"
-description = "Text-to-SQL eval playground: Pydantic Evals + Pydantic AI Harness over DuckDB"
+description = "Benchmark AI agents answering business questions over raw SQL, Malloy and dbt MetricFlow"
 requires-python = ">=3.11"
 dependencies = [
     "fastapi",
