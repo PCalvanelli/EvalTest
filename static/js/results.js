@@ -142,8 +142,8 @@ function renderCell(id) {
     </div></td>`;
   }
   const multi = state.repeats > 1;
-  const money = a.cost != null ? `<div class="whitespace-nowrap text-xs tabular-nums text-ink-muted" title="Average cost per question at list prices">${fmtUSD(a.cost)} / question</div>` : '';
-  const runs = multi ? `<div class="mt-0.5 text-xs font-semibold tabular-nums" title="Share of questions that passed in every repeat">${pct(a.pass_k)} always passed</div>` +
+  const money = a.cost != null ? `<div class="whitespace-nowrap text-xs tabular-nums text-ink-muted" title="Average cost per prompt at list prices">${fmtUSD(a.cost)} / prompt</div>` : '';
+  const runs = multi ? `<div class="mt-0.5 text-xs font-semibold tabular-nums" title="Share of prompts that passed in every repeat">${pct(a.pass_k)} always passed</div>` +
     (a.flaky.length ? `<div class="text-xs tabular-nums text-warning" title="Passed in some repeats, not all">${a.flaky.length} flaky</div>` : '') +
     (a.n < state.repeats ? `<div class="flex items-center gap-1 text-[11px] text-ink-muted">${spinner}${a.n}/${state.repeats} repeats${live ? ` · ${live.answered}` : ''}</div>` : '') : '';
   const details = [multi && a.n > 1 ? `${pct(a.min)}–${pct(a.max)} across repeats (average shown)` : '',
