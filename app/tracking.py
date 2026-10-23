@@ -123,7 +123,7 @@ class MatrixTracker:
         self.client = client
         self.parent_id = parent_id
         self.cell_runs = cell_runs
-        self.outcomes: dict[str, dict[int, list[bool]]] = {cid: {} for cid in cell_runs}
+        self.outcomes: dict[str, dict[int, list[bool | None]]] = {cid: {} for cid in cell_runs}  # None: infra error
         self.costs: dict[str, dict[int, float]] = {cid: {} for cid in cell_runs}
 
     @classmethod
@@ -183,15 +183,18 @@ class MatrixTracker:
             'requests': report['requests'],
             'cost_usd': cost,
             'cost_per_question_usd': cost / n,
+            'infra_errors': report.get('infra_errors', 0),
+            'over_budget': report.get('over_budget', 0),
+            'timeouts': report.get('timeouts', 0),
         }
         ts = int(time.time() * 1000)
         self.client.log_batch(run_id, metrics=[Metric(k, float(v), ts, run_no) for k, v in values.items()])
         self.client.log_dict(run_id, report, f'run-{run_no}/report.json')  # lets History re-render this run
-        self.outcomes[cell_id][run_no] = [c['passed'] for c in cases]
+        self.outcomes[cell_id][run_no] = [None if c.get('status') == 'infra_error' else c['passed'] for c in cases]
         self.costs[cell_id][run_no] = cost / n
 
         for c in cases:
-            if c.get('trace_id'):
+            if c.get('trace_id') and c.get('status') != 'infra_error':
                 mlflow.log_feedback(trace_id=c['trace_id'], name='passed', value=c['passed'], rationale=c['reason'],
                                     source=AssessmentSource('CODE', 'results_match'))
 
@@ -218,7 +221,9 @@ class MatrixTracker:
                 for cell_id, run_id in self.cell_runs.items():
                     runs = self.outcomes[cell_id]
                     if runs:
-                        per_prompt = list(zip(*runs.values()))
+                        # A question's infra-error runs are left out; one with no scored run at all drops out entirely.
+                        per_prompt = [[x for x in p if x is not None] for p in zip(*runs.values())]
+                        per_prompt = [p for p in per_prompt if p]
                         values = {
                             'mean_pass_rate': sum(sum(r) / max(len(r), 1) for r in runs.values()) / len(runs),
                             'pass_k': sum(all(p) for p in per_prompt) / max(len(per_prompt), 1),

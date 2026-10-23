@@ -53,6 +53,8 @@ Both semantic layers can express every question (`uv run python -m app.expressib
 | Pass | The final query runs and its rows match the question's frozen reference rows (order-insensitive, numbers within 0.5%) |
 | pass^k | Share of questions passed in *every* run. Use Runs ≥ 3: one question moves the score 4.5 points |
 | Cost | The agent's tokens (reviewer included) at list prices (`app/pricing.py`), per question |
+| Budget | Every setup gets the same caps per question: 15 tool calls, 250k tokens (agent and reviewer together) and 180 s. A case over a cap fails as *over budget* or *timed out* |
+| Infra error | A provider outage (rate limit, overload, 5xx, connection) or a Malloy compiler crash. Retried twice, then left out of pass rate and pass^k, and counted separately |
 
 **Questions:** `app/questions.py`. Each has a stable id (`b01`, `h01`), a difficulty and tags. The held-out set (10 questions) was written before tuning, so don't tune against it.
 
@@ -72,7 +74,7 @@ uv run uvicorn app.main:app --reload --reload-dir app --reload-dir static
 
 | Task | Command or setting |
 |---|---|
-| Benchmark from the command line | `uv run python -m app.bench --harness on off --runs 3` |
+| Benchmark from the command line | `uv run python -m app.bench --harness on off --runs 3` (each run shuffles the question order; `--seed` fixes it, and the seed is recorded) |
 | Check every question is expressible, and that MetricFlow and Malloy agree on every metric | `uv run python -m app.expressibility` |
 | Rebuild the warehouse | `uv run python -m app.db` (it also rebuilds itself when its SQL changes) |
 | Freeze reference results (after changing questions or the warehouse) | `uv run python -m app.gold freeze` |

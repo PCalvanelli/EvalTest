@@ -9,6 +9,9 @@ import {rank, winnerHtml, tableHtml, initWeights, renderShares} from './ranking.
 const reportsFor = (id) => Object.keys(app.state.runs).map(Number).sort((a, b) => a - b)
   .map((run) => app.state.runs[run][id]).filter(Boolean);
 
+// Infrastructure errors (provider or compiler failures) are retried, then left out of every score.
+const scored = (c) => c && c.status !== 'infra_error';
+
 // Question-level progress for a cell's runs that have no report yet (live runs only).
 const pendingProgress = (id) => Object.entries(app.state.progress ?? {})
   .filter(([run, cells]) => cells[id] && !app.state.runs[run]?.[id]).map(([, cells]) => cells[id]);
@@ -28,15 +31,18 @@ function aggregate(id) {
     tool_calls: mean(rs.map((r) => r.tool_calls)),
     // Matrices logged before costs were computed server side have no cost_usd.
     cost: rs.every((r) => r.cost_usd != null) ? mean(rs.map((r) => r.cost_usd / Math.max(r.total, 1))) : null,
+    infra: rs.reduce((n, r) => n + (r.infra_errors ?? 0), 0),
     ...consistency(rs),
   };
 }
 
-// pass^k: share of prompts that passed in EVERY finished run. Flaky: passed in some runs but not all.
+// pass^k: share of prompts that passed in EVERY finished run. Flaky: passed in some runs but not all. Runs with an
+// infrastructure error don't count for that prompt; a prompt with no scored run drops out.
 function consistency(rs) {
-  const outcomes = app.state.prompts.map((_, i) => rs.map((r) => Boolean(r.cases[i]?.passed)));
+  const outcomes = app.state.prompts.map((_, i) => rs.map((r) => r.cases[i]).filter(scored).map((c) => Boolean(c.passed)));
+  const counted = outcomes.filter((xs) => xs.length);
   return {
-    pass_k: outcomes.filter((xs) => xs.every(Boolean)).length / Math.max(outcomes.length, 1),
+    pass_k: counted.filter((xs) => xs.every(Boolean)).length / Math.max(counted.length, 1),
     flaky: outcomes.flatMap((xs, i) => (xs.some(Boolean) && !xs.every(Boolean) ? [i] : [])),
   };
 }
@@ -116,12 +122,13 @@ export function renderProgress() {
 function liveCell(id) {
   const p = pendingProgress(id)[0];
   if (!p) return null;
-  const passed = Object.values(p.done);
+  const done = Object.values(p.done);
+  const passed = done.filter((x) => x !== null);  // null: an infrastructure error, not scored
   const total = app.state.prompts.length;
   const bar = `<div class="mt-2 h-1 overflow-hidden rounded-full bg-surface-2" aria-hidden="true">
-    <div class="h-full rounded-full bg-accent transition-[width]" style="width:${(100 * passed.length) / Math.max(total, 1)}%"></div></div>`;
+    <div class="h-full rounded-full bg-accent transition-[width]" style="width:${(100 * done.length) / Math.max(total, 1)}%"></div></div>`;
   return {
-    answered: `${passed.length}/${total} answered${p.active.size ? ` · ${p.active.size} running` : ''}`,
+    answered: `${done.length}/${total} answered${p.active.size ? ` · ${p.active.size} running` : ''}`,
     soFar: passed.length ? `${pct(passed.filter(Boolean).length / passed.length)} passing so far` : '',
     bar,
   };
@@ -176,11 +183,12 @@ function renderCell(id, winner) {
     `${fmtS(a.seconds)} · ${Math.round(a.tokens).toLocaleString()} tokens · ${+a.tool_calls.toFixed(1)} tool calls`].filter(Boolean).join('\n');
   const first = reportsFor(id)[0];
   const counts = multi ? '' : ` <span class="text-xs font-normal text-ink-muted">${first.passed}/${first.total}</span>`;
+  const infra = a.infra ? `<div class="text-xs tabular-nums text-warning" title="Provider or compiler failures, retried and then left out of the scores">${a.infra} infra error${a.infra > 1 ? 's' : ''}</div>` : '';
   return `<td class="h-px align-top"><button type="button" data-cell="${esc(id)}" aria-pressed="${selected}"
     title="${esc(details)}" class="flex h-full w-full min-w-[104px] flex-col rounded-control border p-3 text-left transition-colors hover:border-border-strong ${selected ? 'border-accent ring-2 ring-accent/40' : 'border-border'}"
     style="background:${passTint(a.pass_rate)}">
     <div class="whitespace-nowrap text-2xl font-semibold leading-tight tracking-tight tabular-nums">${pct(a.pass_rate)}${counts}</div>
-    ${money}${runs}${err}
+    ${money}${runs}${infra}${err}
     ${id === winner ? '<div class="mt-auto pt-2"><span class="badge badge-pass" title="Best weighted score: see Ranking">Winner</span></div>' : ''}
   </button></td>`;
 }
@@ -195,11 +203,14 @@ function renderPerPrompt() {
     <td class="max-w-[280px]">${esc(p)}</td>
     ${cols.map(({id}) => {
       const pending = pendingProgress(id);
-      const cases = [...reportsFor(id).map((r) => r.cases[i]).filter(Boolean),
-        ...pending.filter((p) => i in p.done).map((p) => ({passed: p.done[i]}))];
+      const all = [...reportsFor(id).map((r) => r.cases[i]).filter(Boolean),
+        ...pending.filter((p) => i in p.done).map((p) => (p.done[i] === null ? {status: 'infra_error'} : {passed: p.done[i]}))];
+      const cases = all.filter(scored);
       const running = pending.some((p) => p.active.has(i));
       if (!cases.length) {
-        return running ? `<td class="text-center" title="Running">${spinner}</td>` : '<td class="text-center text-ink-subtle">·</td>';
+        if (running) return `<td class="text-center" title="Running">${spinner}</td>`;
+        return all.length ? '<td class="text-center font-semibold text-warning" title="Infrastructure error: not scored">!</td>'
+          : '<td class="text-center text-ink-subtle">·</td>';
       }
       if (state.repeats === 1) {
         return `<td class="text-center font-semibold ${cases[0].passed ? 'text-success' : 'text-danger'}" title="${cases[0].passed ? 'Passed' : 'Failed'}">${cases[0].passed ? '✓' : '✗'}</td>`;
@@ -258,7 +269,8 @@ function renderReport(r) {
       </div>
     </div>
     <div class="mt-3 grid grid-cols-2 gap-2 md:grid-cols-4">
-      ${stat('Pass rate', `${pct(r.pass_rate)} <span class="text-sm font-normal text-ink-muted">(${r.passed}/${r.total})</span>`)}
+      ${stat('Pass rate', `${pct(r.pass_rate)} <span class="text-sm font-normal text-ink-muted">(${r.passed}/${r.total})</span>` +
+        (r.infra_errors ? `<span class="block text-xs font-normal text-warning">${r.infra_errors} infra error${r.infra_errors > 1 ? 's' : ''} not scored</span>` : ''))}
       ${r.cost_usd != null ? stat('Cost', `${fmtUSD(r.cost_usd)} <span class="text-sm font-normal text-ink-muted">(${fmtUSD(r.cost_usd / Math.max(r.total, 1))} / question)</span>`) : ''}
       ${stat('Time', fmtS(r.total_seconds))}
       ${stat('Tokens', (r.total_tokens ?? 0).toLocaleString())}
@@ -273,6 +285,8 @@ function renderReport(r) {
         ${r.reviews ? stat('Reviews', `${r.reviews} <span class="text-sm font-normal text-ink-muted">(${r.sent_back} sent back)</span>`) : ''}
         ${r.defined_metrics ? stat('Metrics defined', r.defined_metrics) : ''}
         ${r.lint_retries ? stat('Lint retries', r.lint_retries) : ''}
+        ${r.over_budget ? stat('Over budget', r.over_budget) : ''}
+        ${r.timeouts ? stat('Timed out', r.timeouts) : ''}
       </div>
     </details>
     <div class="grid gap-3 xl:grid-cols-2">${r.cases.map(renderCase).join('')}</div>
@@ -298,12 +312,13 @@ function renderCase(c) {
     ? `${fmtS(c.seconds)} · ${((c.input_tokens || 0) + (c.output_tokens || 0)).toLocaleString()} tokens · ${plural(c.requests ?? 0, 'request')} · ${plural(c.tool_calls ?? 0, 'tool call')}` +
       (c.reviews ? ` · ${c.reviews} review${c.reviews > 1 ? 's' : ''}${c.sent_back ? `, ${c.sent_back} sent back` : ''}` : '') +
       (c.defined_metrics ? ` · ${c.defined_metrics} metric${c.defined_metrics > 1 ? 's' : ''} defined` : '') +
-      (c.lints?.length ? ` · lint: ${esc(c.lints.join('; '))}` : '')
+      (c.lints?.length ? ` · lint: ${esc(c.lints.join('; '))}` : '') +
+      (c.attempts > 1 ? ` · ${c.attempts} attempts` : '')
     : '';
   return `
-  <article class="min-w-0 rounded-control border p-3 ${c.passed ? 'border-success/30' : 'border-danger/30'}">
+  <article class="min-w-0 rounded-control border p-3 ${c.status === 'infra_error' ? 'border-warning/30' : c.passed ? 'border-success/30' : 'border-danger/30'}">
     <div class="flex items-start gap-2">
-      ${passBadge(c.passed)}
+      ${passBadge(c.passed, c.status)}
       <div class="min-w-0 flex-1">
         <p class="text-sm font-medium">${esc(c.prompt)}</p>
       </div>

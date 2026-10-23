@@ -27,7 +27,8 @@ export const passTint = (rate) => `color-mix(in oklab, rgb(var(--success)) ${Mat
 
 export const spinner = '<span class="spinner" aria-hidden="true"></span>';
 export const stat = (label, value, title = '') => `<div class="stat"${title ? ` title="${esc(title)}"` : ''}><div class="stat-label">${label}</div><div class="stat-value">${value}</div></div>`;
-export const passBadge = (passed) => (passed ? '<span class="badge badge-pass">Pass</span>' : '<span class="badge badge-fail">Fail</span>');
+export const passBadge = (passed, status) => (status === 'infra_error' ? '<span class="badge badge-warn" title="Provider or compiler failure: left out of the scores">Infra error</span>'
+  : passed ? '<span class="badge badge-pass">Pass</span>' : '<span class="badge badge-fail">Fail</span>');
 export const empty = (html) => `<div class="empty">${html}</div>`;
 export const loading = (what = 'Loading') => `<div class="flex items-center gap-2 p-6 text-sm text-ink-muted">${spinner}${esc(what)}…</div>`;
 export const errorBox = (msg) => `<div class="notice notice-error">${esc(msg)}</div>`;

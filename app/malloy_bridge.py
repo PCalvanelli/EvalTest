@@ -19,6 +19,10 @@ class MalloyError(Exception):
     """The Malloy compiler rejected a query (or the model)."""
 
 
+class SidecarError(RuntimeError):
+    """The compiler itself is unavailable (not installed, or its process died): infrastructure, not the query."""
+
+
 class _Sidecar:
     """One long-lived Node process per event loop; requests are serialized (compiles take milliseconds)."""
 
@@ -29,10 +33,10 @@ class _Sidecar:
 
     async def _start(self) -> None:
         if not (ROOT / 'malloy' / 'node_modules').exists():
-            raise RuntimeError('Malloy sidecar is not installed: run `npm ci` in the malloy/ directory.')
+            raise SidecarError('Malloy sidecar is not installed: run `npm ci` in the malloy/ directory.')
         node = shutil.which('node')
         if node is None:
-            raise RuntimeError('Node.js is required for the Malloy context but `node` was not found on PATH.')
+            raise SidecarError('Node.js is required for the Malloy context but `node` was not found on PATH.')
         self.proc = await asyncio.create_subprocess_exec(
             node, str(SIDECAR),
             stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
@@ -50,7 +54,7 @@ class _Sidecar:
         await self.proc.stdin.drain()
         line = await self.proc.stdout.readline()
         if not line:
-            raise RuntimeError('Malloy sidecar exited unexpectedly.')
+            raise SidecarError('Malloy sidecar exited unexpectedly.')
         return json.loads(line)
 
     async def compile(self, query: str) -> str:

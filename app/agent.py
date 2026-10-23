@@ -241,6 +241,8 @@ def _block_uncompilable_metricflow(definitions: list[MetricDefinition]):
 async def _block_uncompilable_malloy(call: ToolCallInfo) -> GuardrailResult:
     try:
         await malloy_bridge.compile(str(call.args.get('query', '')))
+    except malloy_bridge.SidecarError:
+        raise
     except Exception as e:
         return GuardrailResult.block(f'Malloy query does not compile: {e}')
     return GuardrailResult.allow()
@@ -552,6 +554,8 @@ def build_agent(
             """Compile a Malloy query (a `run:` statement) against the model, run it, and return the columns, rows (capped) and total row count."""
             try:
                 sql, error = await malloy_bridge.compile(query), None
+            except malloy_bridge.SidecarError:
+                raise  # the compiler is down: an infrastructure failure for the case, not feedback for the agent
             except Exception as e:
                 sql, error = None, str(e)
             return run_query(_query_key(query), {'malloy': query}, sql, error)

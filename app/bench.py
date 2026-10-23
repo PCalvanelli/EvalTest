@@ -27,6 +27,7 @@ async def main() -> None:
     parser.add_argument('--set', default='benchmark', choices=list(QUESTION_SETS))
     parser.add_argument('--cases', help='Comma-separated question ids (b13) or 1-based numbers (default: all).')
     parser.add_argument('--runs', type=int, default=1)
+    parser.add_argument('--seed', type=int, help='Seed for the per-run question order (default: random, recorded).')
     parser.add_argument('--out', help='Write every report to this JSON file.')
     args = parser.parse_args()
     if not os.environ.get('ANTHROPIC_API_KEY'):
@@ -38,16 +39,18 @@ async def main() -> None:
         questions = [by_id[c] if c in by_id else questions[int(c) - 1] for c in args.cases.split(',')]
     cells = matrix_cells([args.model], [h == 'on' for h in args.harness], args.contexts)
     reports = []
-    async with aclosing(run_matrix(cells, questions, args.runs, {'question_set': args.set, 'source': 'bench'})) as events:
+    params = {'question_set': args.set, 'source': 'bench'}
+    async with aclosing(run_matrix(cells, questions, args.runs, params, seed=args.seed)) as events:
         async for event in events:
             if event['type'] == 'cell':
                 report = event['report']
                 reports.append(report)
-                failed = [c['name'] for c in report['cases'] if not c['passed']]
+                failed = [c['name'] for c in report['cases'] if c['status'] == 'fail']
                 harness = 'harness' if report['harness_on'] else 'baseline'
                 print(f'run {event["run"]}  {report["context"]:<10} {harness:<8}  pass {report["passed"]}/{report["total"]} '
                       f'({report["pass_rate"]:.1%})  tokens {report["total_tokens"]:,}  cost ${report["cost_usd"]:.2f}'
-                      f'  failed: {", ".join(failed) or "-"}', flush=True)
+                      f'  failed: {", ".join(failed) or "-"}'
+                      + (f'  infra errors (not scored): {report["infra_errors"]}' if report['infra_errors'] else ''), flush=True)
             elif event['type'] == 'cell_error':
                 print(f'run {event["run"]}  {event["id"]}  ERROR {event["error"]}', flush=True)
             elif event['type'] == 'run_end':

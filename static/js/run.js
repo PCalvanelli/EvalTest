@@ -136,7 +136,7 @@ function handleEvent(ev) {
   if (ev.type === 'case_start' || ev.type === 'case') {
     const p = ((state.progress[ev.run] ??= {})[ev.id] ??= {active: new Set(), done: {}});
     if (ev.type === 'case_start') p.active.add(ev.case);
-    else { p.active.delete(ev.case); p.done[ev.case] = ev.passed; }
+    else { p.active.delete(ev.case); p.done[ev.case] = ev.status === 'infra_error' ? null : ev.passed; }  // null: not scored
     return scheduleProgress(state);
   }
   if (ev.type === 'plan') Object.assign(state, {cells: ev.cells, repeats: ev.repeats, mlflow: ev.mlflow, prompts: ev.prompts});
