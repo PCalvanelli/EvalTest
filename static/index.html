@@ -45,11 +45,17 @@
       .btn-outline { @apply border border-border bg-surface text-ink hover:bg-surface-2; }
       .btn-quiet { @apply text-ink-muted hover:bg-surface-2 hover:text-ink; }
       .link { @apply text-link underline-offset-2 hover:underline; }
-      .chip { @apply block cursor-pointer select-none rounded-control border border-border bg-surface px-3 py-1.5 text-sm text-ink-muted hover:border-border-strong peer-checked:border-accent peer-checked:bg-accent peer-checked:text-accent-fg peer-focus-visible:ring-2 peer-focus-visible:ring-link/50; }
+      /* Option chips with a visible checkbox, so on and off read at a glance. */
+      .chip { @apply flex cursor-pointer select-none items-center gap-2 rounded-control border border-border bg-surface py-1.5 pl-2 pr-3 text-sm text-ink-muted hover:border-border-strong peer-checked:border-border-strong peer-checked:text-ink peer-focus-visible:ring-2 peer-focus-visible:ring-link/50; }
+      .chip-box { @apply grid h-4 w-4 shrink-0 place-items-center rounded-[4px] border border-border-strong bg-surface text-accent-fg; }
+      .chip-box svg { @apply invisible h-3 w-3; }
+      .peer:checked + .chip .chip-box { @apply border-accent bg-accent; }
+      .peer:checked + .chip .chip-box svg { @apply visible; }
       .badge { @apply inline-flex shrink-0 items-center gap-1 rounded-control px-1.5 py-0.5 text-xs font-semibold; }
       .badge-pass { @apply bg-success-soft text-success; }
       .badge-fail { @apply bg-danger-soft text-danger; }
       .badge-neutral { @apply bg-surface-2 text-ink-muted; }
+      .badge-warn { @apply bg-warning-soft text-warning; }
       .tab { @apply border-b border-transparent px-1 py-1 text-sm text-ink-muted hover:text-ink; }
       .tab[aria-current="page"] { @apply border-ink font-medium text-ink; }
       .stat { @apply rounded-control bg-surface-2 px-3 py-2; }
@@ -80,20 +86,20 @@
       <a class="tab" href="#/harness" data-tab="harness">Harness</a>
     </nav>
     <a id="mlflowNav" href="/mlflow/" target="_blank" rel="noopener" class="btn btn-quiet ml-auto hidden"
-       title="Traces and runs in MLflow's own UI">MLflow ↗</a>
+       title="Open MLflow">MLflow ↗</a>
   </div>
 </header>
 
 <!-- ─────────────────────────── Run ─────────────────────────── -->
 <div id="view-run" class="view mx-auto max-w-[1500px] p-4 lg:p-6" hidden>
-  <form id="form" class="panel p-4" aria-label="Matrix">
+  <form id="form" class="panel p-4" aria-label="Setup">
     <div class="flex flex-wrap items-end gap-x-8 gap-y-4">
       <fieldset>
         <legend class="group-label">Models</legend>
         <div id="modelChoices" class="flex flex-wrap gap-1.5"></div>
       </fieldset>
       <fieldset>
-        <legend class="group-label">Harness</legend>
+        <legend class="group-label">Agent</legend>
         <div id="harnessChoices" class="flex gap-1.5"></div>
       </fieldset>
       <fieldset class="min-w-0">
@@ -105,63 +111,69 @@
         <select id="questionSet" class="input mt-0 w-auto py-1.5"></select>
       </label>
       <label class="flex flex-col">
-        <span class="group-label">Runs</span>
+        <span class="group-label">Repeats</span>
         <input id="repeats" type="number" min="1" max="10" step="1" value="1" required
-               class="input mt-0 w-20 py-1.5 tabular-nums" title="Sequential repeats of the whole matrix (1–10)">
+               class="input mt-0 w-20 py-1.5 tabular-nums" title="Run everything this many times (1–10)">
       </label>
       <div class="flex flex-wrap items-center gap-x-4 gap-y-2 lg:ml-auto">
-        <p id="matrixCount" class="text-sm tabular-nums text-ink-muted"></p>
-        <button id="runBtn" type="submit" class="btn btn-primary px-5 py-2.5">Run matrix</button>
+        <button id="runBtn" type="submit" class="btn btn-primary px-5 py-2.5">Run</button>
       </div>
     </div>
   </form>
 
   <div id="status" class="notice notice-info mt-3 hidden" role="status"></div>
 
-  <main class="min-w-0 space-y-5 pt-5">
-    <div id="loadedBanner" class="notice notice-info hidden flex flex-wrap items-center justify-between gap-2"></div>
+  <!-- Results. Shared with History, which moves this block into #pastRun to show a past run. -->
+  <main id="results" class="min-w-0 space-y-5 pt-5">
     <section id="matrixWrap" class="panel hidden p-4">
       <div class="mb-1 flex flex-wrap items-baseline justify-between gap-3">
-        <h2 class="panel-title">Pass rate by cell</h2>
+        <h2 class="panel-title">Pass rate</h2>
         <div class="flex items-center gap-3 text-xs">
           <a id="mlflowLink" target="_blank" rel="noopener" class="hidden text-ink-muted hover:text-ink"
-             title="This matrix's parent run in MLflow's own UI">in MLflow ↗</a>
+             title="Open this run in MLflow">in MLflow ↗</a>
         </div>
       </div>
-      <p class="hint mb-3">Select a cell for case-level detail. Time is wall clock for the cell, including queueing behind other cells. Cost is the agent's tokens at list prices (<code>app/pricing.py</code>).</p>
-      <p id="runTimes" class="mb-3 hidden text-sm tabular-nums text-ink-muted" aria-live="off"></p>
+      <details class="mb-3 text-xs text-ink-muted">
+        <summary class="cursor-pointer select-none hover:text-ink">Timing and cost</summary>
+        <p id="runTimes" class="mt-1.5 hidden text-sm tabular-nums" aria-live="off"></p>
+        <p class="hint mt-1.5">Time includes waiting for other setups. Cost uses list prices (<code>app/pricing.py</code>).</p>
+      </details>
       <div class="overflow-x-auto"><table id="matrix" class="w-full border-separate border-spacing-1.5 text-sm"></table></div>
     </section>
     <section id="perPromptWrap" class="panel hidden p-4">
-      <h2 class="panel-title mb-3">Per prompt</h2>
+      <h2 class="panel-title mb-3">By question</h2>
       <div class="overflow-x-auto"><table id="perPrompt" class="data-table w-full text-xs"></table></div>
     </section>
     <div id="detail"></div>
     <div id="empty" class="empty">
-      Pick models, harness and targets above, then run the matrix. Results appear here as each cell finishes.
-      Past matrices are in <a class="link" href="#/history">History</a>.
+      Pick models, harness and targets, then press Run. Results fill in as each setup finishes.
+      Past runs are in <a class="link" href="#/history">History</a>.
     </div>
   </main>
 </div>
 
 <!-- ─────────────────────────── History ─────────────────────────── -->
 <div id="view-history" class="view mx-auto max-w-[1500px] p-4 lg:p-6" hidden>
-  <div class="mb-4 flex flex-wrap items-end justify-between gap-3">
-    <div>
-      <h1 class="text-xl font-semibold tracking-tight">History</h1>
-      <p class="hint">Every matrix you've run, from the MLflow store. Open one to see it in the Run view.</p>
+  <div id="historyList">
+    <div class="mb-4 flex flex-wrap items-end justify-between gap-3">
+      <div>
+        <h1 class="text-xl font-semibold tracking-tight">History</h1>
+        <p class="hint">Every past run. Open one to see its results.</p>
+      </div>
+      <button id="historyRefresh" type="button" class="btn btn-outline">Refresh</button>
     </div>
-    <button id="historyRefresh" type="button" class="btn btn-outline">Refresh</button>
+    <div id="historyBody"></div>
   </div>
-  <div id="historyBody"></div>
+  <div id="pastRun" hidden>
+    <div id="pastHeader"></div>
+  </div>
 </div>
 
 <!-- ─────────────────────────── Harness ─────────────────────────── -->
 <div id="view-harness" class="view mx-auto max-w-[1500px] p-4 lg:p-6" hidden>
   <div class="mb-4">
     <h1 class="text-xl font-semibold tracking-tight">Harness</h1>
-    <p class="hint max-w-[80ch]">Read only. Everything one target's agent is given: its instructions, tools and the checks around
-      them, with the harness or without it. Built from the same code the evals run, so it always matches.</p>
+    <p class="hint">How the agent answers a question, step by step: the baseline (the model with only the target’s query tools) vs. with the harness. Open any item to read it.</p>
   </div>
   <div id="harnessControls" class="mb-4 flex flex-wrap items-center gap-x-6 gap-y-2"></div>
   <div id="harnessBody"></div>

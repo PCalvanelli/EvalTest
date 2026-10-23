@@ -26,7 +26,7 @@ export function fmtUSD(v) {
 export const passTint = (rate) => `color-mix(in oklab, rgb(var(--success)) ${Math.round((rate ?? 0) * 26)}%, rgb(var(--surface)))`;
 
 export const spinner = '<span class="spinner" aria-hidden="true"></span>';
-export const stat = (label, value) => `<div class="stat"><div class="stat-label">${label}</div><div class="stat-value">${value}</div></div>`;
+export const stat = (label, value, title = '') => `<div class="stat"${title ? ` title="${esc(title)}"` : ''}><div class="stat-label">${label}</div><div class="stat-value">${value}</div></div>`;
 export const passBadge = (passed) => (passed ? '<span class="badge badge-pass">Pass</span>' : '<span class="badge badge-fail">Fail</span>');
 export const empty = (html) => `<div class="empty">${html}</div>`;
 export const loading = (what = 'Loading') => `<div class="flex items-center gap-2 p-6 text-sm text-ink-muted">${spinner}${esc(what)}…</div>`;

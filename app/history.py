@@ -8,7 +8,7 @@ from collections import defaultdict
 from typing import Any
 
 import mlflow
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from mlflow import MlflowClient
 
 from . import tracking
@@ -69,10 +69,12 @@ def _group(runs: list) -> tuple[list, dict[str, list]]:
 
 
 @router.get('/matrices')
-async def list_matrices(limit: int = 100) -> list[dict]:
+async def list_matrices(limit: int = Query(25, ge=1, le=100), offset: int = Query(0, ge=0)) -> dict:
+    """One page of matrices, newest first, plus the total count for paging."""
     def work():
         parents, children = _group(_all_runs(_experiment()))
-        return [_matrix(p, children[p.info.run_id]) for p in parents[:limit]]
+        page = parents[offset:offset + limit]
+        return {'matrices': [_matrix(p, children[p.info.run_id]) for p in page], 'total': len(parents)}
 
     return await asyncio.to_thread(work)
 
@@ -97,12 +99,16 @@ def _load_matrix(matrix_id: str) -> dict:
     errors: dict[str, str] = {}
     for child in children:
         cell = _cell(child)
+        # Reports saved before cost_usd joined report.json still have it as a per-run metric.
+        costs = {m.step: m.value for m in client.get_metric_history(child.info.run_id, 'cost_usd')}
         for art in client.list_artifacts(child.info.run_id):
             if not (art.is_dir and art.path.startswith('run-')):
                 continue
             run_no = int(art.path.removeprefix('run-'))
             report = _load(f'runs:/{child.info.run_id}/{art.path}/report.json')
             if report is not None:
+                if report.get('cost_usd') is None and run_no in costs:
+                    report['cost_usd'] = costs[run_no]
                 runs[run_no][cell['id']] = {**report, 'id': cell['id'], 'run': run_no}
         for key, value in child.data.tags.items():
             if key.startswith('error.run-'):

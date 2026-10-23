@@ -49,7 +49,7 @@ export function renderRunTimes() {
   const {state} = app;
   const el = $('#runTimes');
   const time = (label, s) => `${label}: <span class="font-medium text-ink">${fmtDur(s)}</span>`;
-  const runs = state.repeats > 1 ? Object.entries(state.runSeconds).map(([n, s]) => time(`Run ${n}`, s)) : [];
+  const runs = state.repeats > 1 ? Object.entries(state.runSeconds).map(([n, s]) => time(`Repeat ${n}`, s)) : [];
   const parts = [...runs, ...(state.totalSeconds != null ? [time('Total', state.totalSeconds)] : [])];
   el.innerHTML = parts.join('<span aria-hidden="true" class="mx-2 text-ink-subtle">·</span>');
   el.classList.toggle('hidden', !parts.length);
@@ -92,18 +92,18 @@ function renderCell(id) {
       : `<td class="align-top"><div class="flex min-h-[92px] min-w-[150px] items-center gap-2 rounded-control border border-dashed border-border-strong p-3 text-xs text-ink-subtle">${spinner}Running…</div></td>`;
   }
   const multi = state.repeats > 1;
-  const money = a.cost != null ? `<div class="text-xs tabular-nums text-ink" title="Mean token cost per question at list prices">${fmtUSD(a.cost)} / question</div>` : '';
-  const range = multi && a.n > 1 ? ` <span class="text-xs font-normal text-ink-muted" title="Min–max pass rate across runs">${pct(a.min)}–${pct(a.max)}</span>` : '';
-  const runs = multi ? `<div class="mt-0.5 text-xs tabular-nums"><span class="font-semibold" title="Share of prompts that passed in every run">pass^k ${pct(a.pass_k)}</span>` +
+  const money = a.cost != null ? `<div class="text-xs tabular-nums text-ink-muted" title="Average cost per question at list prices">${fmtUSD(a.cost)} / question</div>` : '';
+  const runs = multi ? `<div class="mt-0.5 text-xs tabular-nums"><span class="font-semibold" title="Share of questions that passed in every repeat">${pct(a.pass_k)} always passed</span>` +
     `${a.flaky.length ? ` · <span class="text-warning">${a.flaky.length} flaky</span>` : ''}</div>` +
-    `<div class="flex items-center gap-1 text-[11px] text-ink-muted">${a.n < state.repeats ? spinner : ''}${a.n}/${state.repeats} runs · mean shown</div>` : '';
+    (a.n < state.repeats ? `<div class="flex items-center gap-1 text-[11px] text-ink-muted">${spinner}${a.n}/${state.repeats} repeats</div>` : '') : '';
+  const details = [multi && a.n > 1 ? `${pct(a.min)}–${pct(a.max)} across repeats (average shown)` : '',
+    `${fmtS(a.seconds)} · ${Math.round(a.tokens).toLocaleString()} tokens · ${+a.tool_calls.toFixed(1)} tool calls`].filter(Boolean).join('\n');
   const first = reportsFor(id)[0];
   const counts = multi ? '' : ` <span class="text-xs font-normal text-ink-muted">${first.passed}/${first.total}</span>`;
   return `<td class="align-top"><button type="button" data-cell="${esc(id)}" aria-pressed="${selected}"
-    class="w-full min-w-[150px] rounded-control border p-3 text-left transition-colors hover:border-border-strong ${selected ? 'border-accent ring-2 ring-accent/40' : 'border-border'}"
+    title="${esc(details)}" class="w-full min-w-[150px] rounded-control border p-3 text-left transition-colors hover:border-border-strong ${selected ? 'border-accent ring-2 ring-accent/40' : 'border-border'}"
     style="background:${passTint(a.pass_rate)}">
-    <div class="whitespace-nowrap text-[26px] font-semibold leading-tight tracking-tight tabular-nums">${pct(a.pass_rate)}${counts}${range}</div>
-    <div class="text-xs tabular-nums text-ink-muted">${fmtS(a.seconds)} · ${Math.round(a.tokens).toLocaleString()} tok · ${+a.tool_calls.toFixed(1)} tools</div>
+    <div class="whitespace-nowrap text-[26px] font-semibold leading-tight tracking-tight tabular-nums">${pct(a.pass_rate)}${counts}</div>
     ${money}${runs}${err}
   </button></td>`;
 }
@@ -112,7 +112,7 @@ function renderPerPrompt() {
   const {state} = app;
   const {models, combos} = planDims();
   const cols = models.flatMap((m) => combos.map((c) => ({id: cellId(m, c.harness, c.context), m, c})));
-  const head = `<tr><th>Prompt</th>${cols.map(({m, c}) =>
+  const head = `<tr><th>Question</th>${cols.map(({m, c}) =>
     `<th class="whitespace-nowrap !text-center">${esc(modelName(m))}<br><span class="font-normal">${comboLabel(c)}</span></th>`).join('')}</tr>`;
   const rows = state.prompts.map((p, i) => `<tr>
     <td class="max-w-[280px]">${esc(p)}</td>
@@ -124,7 +124,7 @@ function renderPerPrompt() {
       }
       const k = cases.filter((c) => c.passed).length;
       return `<td class="text-center font-medium tabular-nums" style="background:${passTint(k / cases.length)}"
-        title="Passed in ${k} of ${cases.length} runs">${k}/${cases.length}</td>`;
+        title="Passed in ${k} of ${cases.length} repeats">${k}/${cases.length}</td>`;
     }).join('')}
   </tr>`).join('');
   $('#perPrompt').innerHTML = head + rows;
@@ -148,18 +148,18 @@ function renderRunSummary(id, rs, activeRun) {
   const a = aggregate(id);
   const tabs = rs.map((r) => `<button type="button" data-run="${r.run}" aria-pressed="${r.run === activeRun}"
     class="rounded-control border px-2.5 py-1 text-xs tabular-nums ${r.run === activeRun ? 'border-accent bg-accent text-accent-fg' : 'border-border hover:bg-surface-2'}">
-    Run ${r.run} · ${pct(r.pass_rate)}</button>`).join('');
+    Repeat ${r.run} · ${pct(r.pass_rate)}</button>`).join('');
   return `
   <section class="panel mb-4 p-4">
-    <h3 class="mb-2 text-sm font-medium text-ink-muted">Across ${a.n} of ${state.repeats} runs</h3>
+    <h3 class="mb-2 text-sm font-medium text-ink-muted">Across ${a.n} of ${state.repeats} repeats</h3>
     <div class="mb-3 grid grid-cols-2 gap-2 md:grid-cols-5">
-      ${stat('pass^k', pct(a.pass_k))}
-      ${stat('Mean pass rate', pct(a.pass_rate))}
+      ${stat('Always passed', pct(a.pass_k))}
+      ${stat('Average pass rate', pct(a.pass_rate))}
       ${stat('Range', `${pct(a.min)}–${pct(a.max)}`)}
-      ${stat('Mean cell time', fmtS(a.seconds))}
-      ${stat('Mean tokens', Math.round(a.tokens).toLocaleString())}
+      ${stat('Average time', fmtS(a.seconds))}
+      ${stat('Average tokens', Math.round(a.tokens).toLocaleString())}
     </div>
-    ${a.flaky.length ? `<p class="mb-3 rounded-control bg-warning-soft p-2 text-xs"><span class="font-semibold">Flaky prompts</span> (passed in some runs, not all): ${a.flaky.map((i) => esc(state.prompts[i])).join(' · ')}</p>` : ''}
+    ${a.flaky.length ? `<p class="mb-3 rounded-control bg-warning-soft p-2 text-xs"><span class="font-semibold">Flaky questions</span> (passed in some repeats, not all): ${a.flaky.map((i) => esc(state.prompts[i])).join(' · ')}</p>` : ''}
     <div class="flex flex-wrap gap-2">${tabs}</div>
   </section>`;
 }
@@ -169,24 +169,30 @@ function renderReport(r) {
   return `
   <section class="panel min-w-0 p-4">
     <div class="mb-1 flex flex-wrap items-baseline justify-between gap-2">
-      <h2 class="text-lg font-semibold tracking-tight">${esc(modelName(r.model))} · ${comboLabel({harness: r.harness_on, context: r.context})}${state.repeats > 1 ? ` · run ${r.run}` : ''}</h2>
+      <h2 class="text-lg font-semibold tracking-tight">${esc(modelName(r.model))} · ${comboLabel({harness: r.harness_on, context: r.context})}${state.repeats > 1 ? ` · repeat ${r.run}` : ''}</h2>
       <div class="flex items-center gap-3 text-xs">
         ${state.mlflow?.cells?.[r.id] ? `<a href="${esc(state.mlflow.cells[r.id])}" target="_blank" rel="noopener" class="text-ink-muted hover:text-ink"
-          title="This cell's run in MLflow's own UI">in MLflow ↗</a>` : ''}
+          title="Open in MLflow">in MLflow ↗</a>` : ''}
       </div>
     </div>
-    <div class="mb-4 mt-3 grid grid-cols-3 gap-2 md:grid-cols-6">
+    <div class="mt-3 grid grid-cols-2 gap-2 md:grid-cols-4">
       ${stat('Pass rate', `${pct(r.pass_rate)} <span class="text-sm font-normal text-ink-muted">(${r.passed}/${r.total})</span>`)}
-      ${r.cost_usd != null ? stat('Cost', `${fmtUSD(r.cost_usd)} <span class="text-sm font-normal text-ink-muted">(${fmtUSD(r.cost_usd / Math.max(r.total, 1))} / q)</span>`) : ''}
-      ${stat('Cell time', fmtS(r.total_seconds))}
-      ${stat('Avg / prompt', fmtS(r.avg_case_seconds))}
-      ${stat('Tokens', `${(r.total_tokens ?? 0).toLocaleString()}${r.cache_read_tokens ? ` <span class="text-sm font-normal text-ink-muted">(${pct(r.cache_read_tokens / Math.max(r.input_tokens, 1))} of input cached)</span>` : ''}`)}
-      ${stat('Requests', r.requests)}
-      ${stat('Tool calls', r.tool_calls)}
-      ${r.reviews ? stat('Reviews', `${r.reviews} <span class="text-sm font-normal text-ink-muted">(${r.sent_back} sent back)</span>`) : ''}
-      ${r.defined_metrics ? stat('Metrics defined', r.defined_metrics) : ''}
-      ${r.lint_retries ? stat('Lint retries', r.lint_retries) : ''}
+      ${r.cost_usd != null ? stat('Cost', `${fmtUSD(r.cost_usd)} <span class="text-sm font-normal text-ink-muted">(${fmtUSD(r.cost_usd / Math.max(r.total, 1))} / question)</span>`) : ''}
+      ${stat('Time', fmtS(r.total_seconds))}
+      ${stat('Tokens', (r.total_tokens ?? 0).toLocaleString())}
     </div>
+    <details class="mb-4 mt-2">
+      <summary class="cursor-pointer select-none text-xs text-ink-muted hover:text-ink">More stats</summary>
+      <div class="mt-2 grid grid-cols-2 gap-2 md:grid-cols-6">
+        ${stat('Per question', fmtS(r.avg_case_seconds))}
+        ${r.cache_read_tokens ? stat('Input cached', pct(r.cache_read_tokens / Math.max(r.input_tokens, 1))) : ''}
+        ${stat('Requests', r.requests)}
+        ${stat('Tool calls', r.tool_calls)}
+        ${r.reviews ? stat('Reviews', `${r.reviews} <span class="text-sm font-normal text-ink-muted">(${r.sent_back} sent back)</span>`) : ''}
+        ${r.defined_metrics ? stat('Metrics defined', r.defined_metrics) : ''}
+        ${r.lint_retries ? stat('Lint retries', r.lint_retries) : ''}
+      </div>
+    </details>
     <div class="grid gap-3 xl:grid-cols-2">${r.cases.map(renderCase).join('')}</div>
   </section>`;
 }
@@ -203,9 +209,11 @@ function renderQuery(c) {
     ${c.rows ? renderRows(c.rows) : ''}`;
 }
 
+const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+
 function renderCase(c) {
   const meta = c.seconds != null
-    ? `${fmtS(c.seconds)} · ${((c.input_tokens || 0) + (c.output_tokens || 0)).toLocaleString()} tok · ${c.requests ?? 0} req · ${c.tool_calls ?? 0} tool calls` +
+    ? `${fmtS(c.seconds)} · ${((c.input_tokens || 0) + (c.output_tokens || 0)).toLocaleString()} tokens · ${plural(c.requests ?? 0, 'request')} · ${plural(c.tool_calls ?? 0, 'tool call')}` +
       (c.reviews ? ` · ${c.reviews} review${c.reviews > 1 ? 's' : ''}${c.sent_back ? `, ${c.sent_back} sent back` : ''}` : '') +
       (c.defined_metrics ? ` · ${c.defined_metrics} metric${c.defined_metrics > 1 ? 's' : ''} defined` : '') +
       (c.lints?.length ? ` · lint: ${esc(c.lints.join('; '))}` : '')
@@ -216,13 +224,13 @@ function renderCase(c) {
       ${passBadge(c.passed)}
       <div class="min-w-0 flex-1">
         <p class="text-sm font-medium">${esc(c.prompt)}</p>
-        <p class="text-xs tabular-nums text-ink-subtle">${meta}</p>
       </div>
       ${c.trace_url ? `<a href="${esc(c.trace_url)}" target="_blank" rel="noopener" class="btn btn-outline shrink-0 px-2 py-1 text-xs">Trace ↗</a>` : ''}
     </div>
     ${c.error ? `<p class="mt-2 break-words rounded-control bg-danger-soft p-2 font-mono text-xs">${esc(c.error)}</p>` : ''}
     ${c.reason && !c.error ? `<p class="mt-2 text-xs text-ink-muted">${esc(c.reason)}</p>` : ''}
-    ${c.sql ? `<details class="mt-2"><summary class="cursor-pointer text-xs text-accent">Query and results</summary>${renderQuery(c)}</details>` : ''}
+    ${c.sql || meta ? `<details class="mt-2"><summary class="cursor-pointer select-none text-xs text-ink-muted hover:text-ink">Details</summary>
+      ${meta ? `<p class="mt-1.5 text-xs tabular-nums text-ink-subtle">${meta}</p>` : ''}${c.sql ? renderQuery(c) : ''}</details>` : ''}
   </article>`;
 }
 

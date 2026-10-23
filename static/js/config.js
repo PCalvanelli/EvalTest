@@ -10,7 +10,7 @@ export const modelName = (id) => MODELS.find((m) => m.id === id)?.name ?? id;
 export const contextIds = () => Object.keys(app.config.contexts);
 export const contextName = (id) => app.config.contexts[id]?.name ?? id;
 export const cellId = (model, harness, context) => `${model}|${harness ? 'harness' : 'no-harness'}|${context}`;
-export const comboLabel = (c) => `${contextName(c.context)} · ${c.harness ? 'harness' : 'no harness'}`;
+export const comboLabel = (c) => `${contextName(c.context)} · ${c.harness ? 'harness' : 'baseline'}`;
 export function cellLabel(id) {
   const [model, harness, context] = id.split('|');
   return `${modelName(model)} · ${comboLabel({harness: harness === 'harness', context})}`;

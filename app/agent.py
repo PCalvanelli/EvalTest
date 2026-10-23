@@ -1,4 +1,4 @@
-"""Text-to-SQL agent over raw SQL, dbt MetricFlow or Malloy, built bare or with the harness."""
+"""Text-to-SQL agent over raw SQL, dbt MetricFlow or Malloy, built as the baseline or with the harness."""
 
 from __future__ import annotations
 
@@ -474,7 +474,7 @@ def build_agent(
     log: HarnessLog | None = None,
     api_key: str | None = None,
 ) -> Agent[None, SQLAnswer] | Agent[None, MetricFlowAnswer] | Agent[None, MalloyAnswer]:
-    """Build a fresh agent for one target, bare or with the harness. `log` collects what the harness did (reviews,
+    """Build a fresh agent for one target, as the baseline or with the harness. `log` collects what the harness did (reviews,
     reviewer tokens) for the case report."""
     log = log if log is not None else HarnessLog()
     definitions: list[MetricDefinition] = []  # metrics this case defined in query_metrics
