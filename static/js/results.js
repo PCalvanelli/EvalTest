@@ -5,6 +5,7 @@ import {$, $$, esc, mean, fmtS, fmtDur, pct, fmtUSD, passTint, spinner, stat, pa
 import {app, contextIds, contextName, cellId, cellLabel, modelName, comboLabel} from './config.js';
 import {rank, winnerHtml, tableHtml, initWeights, renderShares} from './ranking.js';
 import {passRateCI, pairedCompare, quantile} from './stats.js';
+import {modelIcon, targetIcon, withIcon} from './icons.js';
 
 // All finished reports for a cell, in run order.
 const reportsFor = (id) => Object.keys(app.state.runs).map(Number).sort((a, b) => a - b)
@@ -166,11 +167,11 @@ function renderMatrix() {
   // Two header rows: each target over its baseline / harness columns. Columns share the width equally.
   const targets = [...new Set(combos.map((c) => c.context))];
   const head = `<tr><th class="w-px"></th>${targets.map((t) =>
-    `<th colspan="${combos.filter((c) => c.context === t).length}" class="border-b border-border px-1 pb-1 text-left text-xs font-medium text-ink">${esc(contextName(t))}</th>`).join('')}</tr>
+    `<th colspan="${combos.filter((c) => c.context === t).length}" class="border-b border-border px-1 pb-1 text-left text-xs font-medium text-ink">${withIcon(targetIcon(t), esc(contextName(t)))}</th>`).join('')}</tr>
     <tr><th class="w-px"></th>${combos.map((c) =>
     `<th style="width:${100 / combos.length}%" class="px-1 text-left text-xs font-normal text-ink-muted">${c.harness ? 'Harness' : 'Baseline'}</th>`).join('')}</tr>`;
   const rows = models.map((m) => `<tr>
-    <th class="w-px whitespace-nowrap pr-3 text-left text-sm font-medium">${esc(modelName(m))}</th>
+    <th class="w-px whitespace-nowrap pr-3 text-left text-sm font-medium">${withIcon(modelIcon(), esc(modelName(m)))}</th>
     ${combos.map((c) => renderCell(cellId(m, c.harness, c.context), winner)).join('')}
   </tr>`).join('');
   $('#matrix').innerHTML = head + rows;

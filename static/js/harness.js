@@ -6,6 +6,7 @@ import {$, $$, esc, fmtInt, loading, errorBox} from './ui.js';
 import {getJSON} from './api.js';
 import {go} from './router.js';
 import {contextIds, contextName} from './config.js';
+import {targetIcon, withIcon} from './icons.js';
 
 const cache = new Map();
 const fetchAgent = (target, mode) => {
@@ -19,7 +20,7 @@ export async function showHarness(params) {
   $('#harnessControls').innerHTML = `
     <div class="flex gap-5 border-b border-border" role="tablist" aria-label="Target">
       ${contextIds().map((t) => `<button type="button" role="tab" data-target="${t}" aria-selected="${t === target}"
-        class="-mb-px border-b-2 px-0.5 pb-2 text-sm ${t === target ? 'border-ink font-medium text-ink' : 'border-transparent text-ink-muted hover:text-ink'}">${esc(contextName(t))}</button>`).join('')}
+        class="-mb-px border-b-2 px-0.5 pb-2 text-sm ${t === target ? 'border-ink font-medium text-ink' : 'border-transparent text-ink-muted hover:text-ink'}">${withIcon(targetIcon(t), esc(contextName(t)))}</button>`).join('')}
     </div>`;
   $$('[data-target]').forEach((b) => b.onclick = () => go(`#/harness?target=${b.dataset.target}`));
 
