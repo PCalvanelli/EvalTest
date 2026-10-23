@@ -1,4 +1,4 @@
-// Harness tab, top: the four targets compared. Where each keeps the business meaning (a fixed table), where it sits on
+// Harness tab: the four targets compared. Where each keeps the business meaning (a fixed table), where it sits on
 // expressiveness × determinism, and a task-type heatmap: expected strengths, with measured pass rates from History
 // (current benchmark version, one model and harness mode) where runs exist.
 
@@ -8,7 +8,7 @@ import {contextName, modelName} from './config.js';
 import {targetIcon, withIcon} from './icons.js';
 
 // Left to right: more modeling up front buys correctness, at the cost of coverage.
-export const ORDER = ['raw', 'glossary', 'malloy', 'metricflow'];
+const ORDER = ['raw', 'glossary', 'malloy', 'metricflow'];
 
 const loud = (s) => `<span class="text-success">${s}</span>`;
 const silent = (s) => `<span class="text-danger">${s}</span>`;

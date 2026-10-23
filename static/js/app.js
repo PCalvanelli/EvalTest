@@ -6,7 +6,6 @@ import {getJSON} from './api.js';
 import {register, route} from './router.js';
 import {initRun, showRun} from './run.js';
 import {showHistory} from './history.js';
-import {showHarness} from './harness.js';
 import {showTargets} from './targets.js';
 import {showDocs} from './docs.js';
 import {showSettings} from './settings.js';
@@ -22,7 +21,7 @@ async function init() {
 
   register('run', showRun);
   register('history', (params) => showHistory(params));
-  register('harness', (params) => { showTargets(); return showHarness(params); });
+  register('harness', () => showTargets());
   register('docs', showDocs);
   register('settings', showSettings);
   window.addEventListener('hashchange', route);

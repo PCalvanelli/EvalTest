@@ -37,7 +37,7 @@ function pages() {
         ${table(['Tab', 'Use it to'], [
           ['<a class="link" href="#/run">Run</a>', 'Pick setups and repeats; results stream in.'],
           ['<a class="link" href="#/history">History</a>', 'Reopen a past run, or run it again with the same settings.'],
-          ['<a class="link" href="#/harness">Harness</a>', 'Compare the four targets, by design and by measured task type, and see what the harness adds to each.'],
+          ['<a class="link" href="#/harness">Harness</a>', 'Compare the four targets, by design and by measured task type.'],
           ['<a class="link" href="#/settings">Settings</a>', 'Models and prices, concurrency and the failure labeler.'],
           ['MLflow', 'Inspect traces: every model call and tool call for each prompt.'],
         ])}
@@ -72,7 +72,7 @@ function pages() {
           ['Output checks', 'The final query must run and return data, and pass the target’s lints.'],
           ['Reviewer', 'A fresh agent checks the answer against the question and can send it back.'],
         ])}
-        ${p('See it per target on the <a class="link" href="#/harness">Harness</a> tab.')}`},
+`},
       {id: 'evals', title: 'How the evals work', body: `
         ${p('Every eval runs on four pieces, one job each.')}
         ${table(['Piece', 'Its job here'], [
