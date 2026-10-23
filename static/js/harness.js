@@ -1,6 +1,5 @@
-// Harness tab (read only): one tab per target, comparing how its agent answers a question in the baseline (the model
-// with only the target's query tools) and with the harness, step by step. The server builds the real agent and captures its first model request, so the instructions
-// and tool schemas are exactly what runs.
+// Harness tab (read only): per target, what the harness changes from the baseline. The server builds the real agents
+// and captures their first model request, so the instructions and tool schemas are exactly what runs.
 
 import {$, $$, esc, fmtInt, loading, errorBox} from './ui.js';
 import {getJSON} from './api.js';
@@ -37,87 +36,53 @@ export async function showHarness(params) {
   body.innerHTML = render(off, on);
 }
 
+// The harness as a diff: what both sides get, once, then one row per difference.
 function render(off, on) {
-  const steps = [
-    ['Instructions', told(off, on, false), told(on, off, true)],
-    ['Tools', tools(off, on, false), tools(on, off, true)],
-    ['Each query', querying(off), querying(on, off)],
-    ['The answer', answering(off), answering(on)],
-    ['Retries and caching', limits(off), limits(on, off)],
-  ];
+  const key = (x) => JSON.stringify(x);
+  const split = (list, other, name) => {
+    const theirs = new Map(other.map((x) => [x[name], key(x)]));
+    return {same: list.filter((x) => theirs.get(x[name]) === key(x)), only: list.filter((x) => theirs.get(x[name]) !== key(x))};
+  };
+  const ins = split(off.instructions, on.instructions, 'title'), insOn = split(on.instructions, off.instructions, 'title');
+  const tls = split(off.tools, on.tools, 'name'), tlsOn = split(on.tools, off.tools, 'name');
+  const s = off.settings, h = on.settings;
+  const rows = [
+    ['Instructions', ins.only.map(instruction), insOn.only.map(instruction)],
+    ['Tools', tls.only.map(tool), tlsOn.only.map(tool)],
+    ['Query check', [off.tool_guard], [on.tool_guard]],
+    ['Rows per query', [s.max_rows + (s.sql_in_results ? ', with SQL' : '')], [h.max_rows + (h.sql_in_results ? ', with SQL' : '')]],
+    ['Repeated query', [s.dedupe_repeats ? 'Points back' : 'Runs again'], [h.dedupe_repeats ? 'Points back' : 'Runs again']],
+    ['Answer checks', off.answer_checks.map(check), on.answer_checks.map(check)],
+    ['Retries', [s.retries], [h.retries]],
+    ['Prompt cache', [s.prompt_cache ? 'On' : 'Off'], [h.prompt_cache ? 'On' : 'Off']],
+  ].filter(([, a, b]) => key(a) !== key(b));
+  const cell = (xs) => (xs.filter((x) => x != null && x !== '').length ? stack(xs.map((x) => (typeof x === 'string' && x.startsWith('<') ? x : `<p class="text-sm">${esc(String(x))}</p>`))) : '<span class="text-ink-subtle">—</span>');
   return `
-    <p class="mb-4 max-w-[80ch] text-sm text-ink-muted">${esc(on.target.summary)}</p>
-    <div class="panel max-w-[1200px] overflow-hidden">
-      <div class="hidden border-b border-border bg-surface-2 text-xs font-medium text-ink-muted md:grid md:grid-cols-[200px_minmax(0,1fr)_minmax(0,1fr)]">
-        <div class="px-4 py-2">Step</div><div class="px-4 py-2">Baseline</div><div class="px-4 py-2">With harness</div>
-      </div>
-      ${steps.map(([title, without, withH]) => `
-        <div class="grid border-b border-border last:border-b-0 md:grid-cols-[200px_minmax(0,1fr)_minmax(0,1fr)]">
-          <div class="px-4 pb-1 pt-3 md:py-3"><div class="text-sm font-medium">${title}</div></div>
-          <div class="px-4 py-2 md:py-3"><div class="mb-1 text-xs font-medium text-ink-muted md:hidden">Baseline</div>${without}</div>
-          <div class="px-4 pb-3 pt-2 md:py-3"><div class="mb-1 text-xs font-medium text-ink-muted md:hidden">With harness</div>${withH}</div>
-        </div>`).join('')}
-    </div>
-    <p class="hint mt-2"><span class="font-medium text-ink">New</span>: added by the harness. <span class="line-through">Struck</span>: replaced by it. Tokens ≈ characters ÷ 4.</p>`;
+    <div class="mb-4 flex flex-wrap items-center gap-1.5 text-sm"><span class="mr-1 text-ink-muted">Both get</span>
+      ${[...ins.same.map(instruction), ...tls.same.map(tool)].join('')}</div>
+    <div class="panel max-w-[1100px] overflow-x-auto">
+      <table class="data-table w-full text-sm">
+        <tr><th class="w-36"></th><th>Baseline</th><th>Harness</th></tr>
+        ${rows.map(([name, a, b]) => `<tr><td class="align-top font-medium">${name}</td><td class="align-top">${cell(a)}</td><td class="align-top">${cell(b)}</td></tr>`).join('')}
+      </table>
+    </div>`;
 }
 
-const tokens = (chars) => `≈ ${fmtInt(chars / 4)} tokens`;
-const isNew = '<span class="badge bg-accent-soft text-accent">New</span>';
-
-// One expandable line: name, an optional tag, a note on the right, and the full text inside.
-const item = (name, note, inner, {tag = '', struck = false} = {}) => `
-  <details class="rounded-control border border-border">
-    <summary class="flex cursor-pointer items-center gap-2 px-2.5 py-1.5 text-sm">
-      <span class="${struck ? 'text-ink-muted line-through' : ''}">${name}</span>${tag}
-      <span class="ml-auto shrink-0 text-xs tabular-nums text-ink-muted">${note}</span>
-    </summary>
-    <div class="px-2.5 pb-2.5">${inner}</div>
+// One expandable chip: a name, a note on the right, and the full text inside.
+const item = (name, note, inner) => `<details class="rounded-control border border-border bg-surface open:basis-full">
+    <summary class="flex cursor-pointer items-center gap-2 px-2 py-1 text-sm"><span>${name}</span>
+      ${note ? `<span class="ml-auto shrink-0 text-xs tabular-nums text-ink-muted">${note}</span>` : ''}</summary>
+    <div class="px-2 pb-2">${inner}</div>
   </details>`;
-const stack = (items) => `<div class="space-y-1.5">${items.join('')}</div>`;
-// A plain sentence; `changed` marks it as different from the baseline.
-const line = (text, changed = false) => `<p class="text-sm ${changed ? 'text-ink' : 'text-ink-muted'}">${changed ? '<span class="mr-1.5 inline-block h-1.5 w-1.5 rounded-full bg-accent align-middle" aria-hidden="true"></span>' : ''}${text}</p>`;
-const lines = (rows) => `<div class="space-y-1">${rows.join('')}</div>`;
+const stack = (items) => `<div class="flex flex-wrap items-start gap-1">${items.join('')}</div>`;
 
-// `d` is the side being drawn, `other` the opposite side; `withSide` says which column this is.
-function told(d, other, withSide) {
-  const has = (p) => other.instructions.some((q) => q.title === p.title);
-  return stack(d.instructions.map((p) => item(esc(p.title), tokens(p.text.length),
-    `<pre class="code max-h-[50vh] overflow-auto">${esc(p.text.trim())}</pre>`,
-    {tag: withSide && !has(p) ? isNew : '', struck: !withSide && !has(p)})));
-}
+const instruction = (p) => item(esc(p.title), `<span title="characters ÷ 4">≈ ${fmtInt(p.text.length / 4)} tok</span>`,
+  `<pre class="code max-h-[50vh] overflow-auto">${esc(p.text.trim())}</pre>`);
 
-function tools(d, other, withSide) {
-  const has = (t) => other.tools.some((u) => u.name === t.name);
-  return stack(d.tools.map((t) => item(`<span class="font-mono">${esc(t.name)}</span>`,
-    t.kind === 'answer' ? 'gives the answer' : '', `
-    ${t.description ? `<p class="mb-2 whitespace-pre-wrap text-sm text-ink-muted">${esc(t.description)}</p>` : ''}
-    <pre class="code max-h-[50vh] overflow-auto">${esc(JSON.stringify(t.schema, null, 2))}</pre>`,
-    {tag: withSide && !has(t) ? isNew : '', struck: !withSide && !has(t)})));
-}
+const tool = (t) => item(`<span class="font-mono">${esc(t.name)}</span>`, t.kind === 'answer' ? 'answers' : '', `
+  ${t.description ? `<p class="mb-2 whitespace-pre-wrap text-sm text-ink-muted">${esc(t.description)}</p>` : ''}
+  <pre class="code max-h-[50vh] overflow-auto">${esc(JSON.stringify(t.schema, null, 2))}</pre>`);
 
-// `base` is passed for the with-harness side, so rows that differ from the baseline get a marker.
-function querying(d, base) {
-  const s = d.settings, b = base?.settings;
-  return lines([
-    line(d.tool_guard ? `${esc(d.tool_guard)}.` : 'Runs exactly as written.', !!base && d.tool_guard !== base.tool_guard),
-    line(`Returns up to ${s.max_rows} rows${s.sql_in_results ? ', with the SQL it compiled to' : ''}.`, !!b && (s.max_rows !== b.max_rows || s.sql_in_results !== b.sql_in_results)),
-    line(s.dedupe_repeats ? 'A repeated query points back to the earlier result.' : 'A repeated query runs again.', !!b && s.dedupe_repeats !== b.dedupe_repeats),
-  ]);
-}
-
-function answering(d) {
-  if (!d.answer_checks.length) return line('The first answer is final. Nothing checks it.');
-  return `${line(`${d.answer_checks.length} checks, in order. A failed one sends the answer back.`, true)}
-    <div class="mt-2">${stack(d.answer_checks.map((c, i) => item(`${i + 1}. ${esc(c.title)}`, `up to ${esc(c.limit)}`, `
-      <p class="text-sm text-ink-muted">${esc(c.text)}</p>
-      ${c.instructions ? `<p class="mt-2 text-xs font-medium text-ink-muted">Reviewer instructions</p>
-        <pre class="code mt-1 whitespace-pre-wrap">${esc(c.instructions)}</pre>` : ''}`)))}</div>`;
-}
-
-function limits(d, base) {
-  const s = d.settings, b = base?.settings;
-  return lines([
-    line(`Up to ${s.retries} retries per prompt.`, !!b && s.retries !== b.retries),
-    line(s.prompt_cache ? 'Prompt caching on: repeated input costs 0.1×.' : 'No prompt caching: all input at full price.', !!b && s.prompt_cache !== b.prompt_cache),
-  ]);
-}
+const check = (c, i) => item(`${i + 1}. ${esc(c.title)}`, `<span title="up to ${esc(c.limit)}">≤ ${esc(c.limit.split(' ')[0])}</span>`, `
+  <p class="text-sm text-ink-muted">${esc(c.text)}</p>
+  ${c.instructions ? `<pre class="code mt-2 whitespace-pre-wrap">${esc(c.instructions)}</pre>` : ''}`);
