@@ -36,12 +36,14 @@ def _tool(t, kind: str) -> dict:  # noqa: ANN001
 
 TOOL_GUARDS = {
     'raw': 'Only a single read-only SELECT or WITH runs',
+    'glossary': 'Only a single read-only SELECT or WITH runs',
     'metricflow': 'Compiled first; MetricFlow errors go back to the agent',
     'malloy': 'Compiled first; Malloy errors go back to the agent',
 }
 
 LINTS = {
     'raw': ('Deprecated tables', 'The final query must not read tables the warehouse documents as DEPRECATED.'),
+    'glossary': ('Deprecated tables', 'The final query must not read tables the warehouse documents as DEPRECATED.'),
     'malloy': ('Flat result', 'The final result must not contain nested rows from nest:.'),
 }
 
@@ -61,7 +63,7 @@ def _answer_checks(context: A.Context) -> list[dict]:
     checks.append({'title': 'Reviewer', 'limit': f'{A.MAX_REVIEWS} reviews',
                    'text': 'A fresh agent on the same model, with no memory of the conversation, checks the question, '
                            'final query, explanation and first 10 rows'
-                           + (', plus the documentation of every column the query uses' if context == 'raw' else '')
+                           + (', plus the documentation of every column the query uses' if context in A.RAW_CONTEXTS else '')
                            + ', and sends concrete problems back.',
                    'instructions': A.REVIEW_INSTRUCTIONS.format(target_rules=A.REVIEW_TARGET_RULES[context])})
     return checks
@@ -81,7 +83,7 @@ async def describe(context: A.Context, harness: bool) -> dict:
             'prompt_cache': harness,
             'retries': A.HARNESS_RETRIES if harness else 2,
             'max_rows': A.LEAN_MAX_ROWS if harness else A.db.MAX_ROWS,
-            'sql_in_results': context != 'raw' and not harness,
+            'sql_in_results': context not in A.RAW_CONTEXTS and not harness,
             'dedupe_repeats': harness,
         },
     }
