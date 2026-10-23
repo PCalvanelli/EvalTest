@@ -8,6 +8,10 @@ import {app, contextIds, cellId, modelName, comboLabel} from './config.js';
 const reportsFor = (id) => Object.keys(app.state.runs).map(Number).sort((a, b) => a - b)
   .map((run) => app.state.runs[run][id]).filter(Boolean);
 
+// Question-level progress for a cell's runs that have no report yet (live runs only).
+const pendingProgress = (id) => Object.entries(app.state.progress ?? {})
+  .filter(([run, cells]) => cells[id] && !app.state.runs[run]?.[id]).map(([, cells]) => cells[id]);
+
 function aggregate(id) {
   const rs = reportsFor(id);
   if (!rs.length) return null;
@@ -66,6 +70,28 @@ export function renderAll() {
   if (state.selected) selectCell(state.selected, state.selectedRun);
 }
 
+/** Re-render just the live parts (matrix and per-question table) after question-level progress. */
+export function renderProgress() {
+  if (!app.state.cells.length) return;
+  renderMatrix();
+  renderPerPrompt();
+}
+
+// The unfinished run's answered count, running count and pass rate so far, or null if nothing has started.
+function liveCell(id) {
+  const p = pendingProgress(id)[0];
+  if (!p) return null;
+  const passed = Object.values(p.done);
+  const total = app.state.prompts.length;
+  const bar = `<div class="mt-2 h-1 overflow-hidden rounded-full bg-surface-2" aria-hidden="true">
+    <div class="h-full rounded-full bg-accent transition-[width]" style="width:${(100 * passed.length) / Math.max(total, 1)}%"></div></div>`;
+  return {
+    answered: `${passed.length}/${total} answered${p.active.size ? ` · ${p.active.size} running` : ''}`,
+    soFar: passed.length ? `${pct(passed.filter(Boolean).length / passed.length)} passing so far` : '',
+    bar,
+  };
+}
+
 function renderMatrix() {
   const {state} = app;
   const {models, combos} = planDims();
@@ -87,15 +113,25 @@ function renderCell(id) {
   const a = aggregate(id);
   const selected = state.selected === id;
   const err = state.errors[id] ? `<div class="mt-1 break-words text-[11px] text-danger">${esc(state.errors[id])}</div>` : '';
+  const live = liveCell(id);
   if (!a) {
-    return err ? `<td class="align-top"><div class="rounded-control border border-danger/30 bg-danger-soft p-3 text-xs">${err}</div></td>`
-      : `<td class="align-top"><div class="flex min-h-[92px] min-w-[150px] items-center gap-2 rounded-control border border-dashed border-border-strong p-3 text-xs text-ink-subtle">${spinner}Running…</div></td>`;
+    if (err) return `<td class="align-top"><div class="rounded-control border border-danger/30 bg-danger-soft p-3 text-xs">${err}</div></td>`;
+    if (!live) {
+      return `<td class="align-top"><div class="flex min-h-[92px] min-w-[150px] items-center rounded-control border border-dashed border-border p-3 text-xs text-ink-subtle"
+        title="Waiting for an agent slot">Waiting</div></td>`;
+    }
+    return `<td class="align-top"><div class="min-h-[92px] min-w-[150px] rounded-control border border-dashed border-border-strong p-3 text-xs text-ink-muted">
+      <div class="flex items-center gap-2 font-medium text-ink">${spinner}Running…</div>
+      <div class="mt-1.5 tabular-nums">${live.answered}</div>
+      ${live.soFar ? `<div class="tabular-nums text-ink-subtle">${live.soFar}</div>` : ''}
+      ${live.bar}
+    </div></td>`;
   }
   const multi = state.repeats > 1;
   const money = a.cost != null ? `<div class="text-xs tabular-nums text-ink-muted" title="Average cost per question at list prices">${fmtUSD(a.cost)} / question</div>` : '';
   const runs = multi ? `<div class="mt-0.5 text-xs tabular-nums"><span class="font-semibold" title="Share of questions that passed in every repeat">${pct(a.pass_k)} always passed</span>` +
     `${a.flaky.length ? ` · <span class="text-warning">${a.flaky.length} flaky</span>` : ''}</div>` +
-    (a.n < state.repeats ? `<div class="flex items-center gap-1 text-[11px] text-ink-muted">${spinner}${a.n}/${state.repeats} repeats</div>` : '') : '';
+    (a.n < state.repeats ? `<div class="flex items-center gap-1 text-[11px] text-ink-muted">${spinner}${a.n}/${state.repeats} repeats${live ? ` · ${live.answered}` : ''}</div>` : '') : '';
   const details = [multi && a.n > 1 ? `${pct(a.min)}–${pct(a.max)} across repeats (average shown)` : '',
     `${fmtS(a.seconds)} · ${Math.round(a.tokens).toLocaleString()} tokens · ${+a.tool_calls.toFixed(1)} tool calls`].filter(Boolean).join('\n');
   const first = reportsFor(id)[0];
@@ -117,8 +153,13 @@ function renderPerPrompt() {
   const rows = state.prompts.map((p, i) => `<tr>
     <td class="max-w-[280px]">${esc(p)}</td>
     ${cols.map(({id}) => {
-      const cases = reportsFor(id).map((r) => r.cases[i]).filter(Boolean);
-      if (!cases.length) return '<td class="text-center text-ink-subtle">·</td>';
+      const pending = pendingProgress(id);
+      const cases = [...reportsFor(id).map((r) => r.cases[i]).filter(Boolean),
+        ...pending.filter((p) => i in p.done).map((p) => ({passed: p.done[i]}))];
+      const running = pending.some((p) => p.active.has(i));
+      if (!cases.length) {
+        return running ? `<td class="text-center" title="Running">${spinner}</td>` : '<td class="text-center text-ink-subtle">·</td>';
+      }
       if (state.repeats === 1) {
         return `<td class="text-center font-semibold ${cases[0].passed ? 'text-success' : 'text-danger'}" title="${cases[0].passed ? 'Passed' : 'Failed'}">${cases[0].passed ? '✓' : '✗'}</td>`;
       }

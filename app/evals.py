@@ -6,7 +6,7 @@ from __future__ import annotations
 import asyncio
 import itertools
 import time
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Callable, Sequence
 
 import mlflow
 
@@ -47,7 +47,7 @@ async def run_case(question: dict, model: str, context: Context, harness: bool) 
                                                   for d in answer.metric_definitions]
     try:
         sql = await answer_sql(answer)
-        rows, error = db.run_readonly(sql, max_rows=10), None  # {columns, rows (first 10), row_count}
+        rows, error = await asyncio.to_thread(db.run_readonly, sql, max_rows=10), None  # {columns, rows (first 10), row_count}
     except Exception as e:
         sql, rows, error = getattr(answer, 'sql', None), None, str(e)
     u, r = result.usage, log.reviewer_usage  # reviewer calls are part of the case's cost
@@ -82,19 +82,22 @@ async def run_eval(
     limiter: asyncio.Semaphore,
     mlflow_run_id: str | None = None,
     trace_tags: dict[str, str] | None = None,
+    emit: Callable[[dict], None] = lambda event: None,
 ) -> dict:
     async def case(i: int, question: dict) -> dict:
         name = f'q{i + 1}'
         # One MLflow trace per case: the agent, model and tool spans nest under this root span. The limiter is shared
         # by every cell in the matrix, so `seconds` excludes queueing.
         async with limiter:
+            emit({'type': 'case_start', 'case': i})
             with tracking.span(mlflow_run_id, label, {'prompt': question['text']}) as span:
                 if span is not None:
                     mlflow.update_current_trace(tags={**(trace_tags or {}), 'kind': 'agent', 'case': name})
                 output = await run_case(question, model, context, harness)
                 if span is not None:
                     span.set_outputs({k: output[k] for k in ('sql', 'metricflow_query', 'malloy_query', 'rows', 'error')})
-        passed, reason = await asyncio.to_thread(grade, output['sql'], output['error'], question)
+            passed, reason = await asyncio.to_thread(grade, output['sql'], output['error'], question)
+            emit({'type': 'case', 'case': i, 'passed': passed, 'seconds': output['seconds']})
         return {'name': name, 'prompt': question['text'], 'expected_sql': question['expected_sql'], **output,
                 'passed': passed, 'reason': reason, 'cost_usd': case_cost(output, model),
                 'trace_url': tracking.trace_url(span.trace_id) if span is not None else None}
@@ -136,9 +139,10 @@ def matrix_cells(models: Sequence[str], harness_modes: Sequence[bool], contexts:
 
 
 async def run_matrix(cells: list[dict], questions: Sequence[dict], repeats: int, params: dict) -> AsyncIterator[dict]:
-    """Run every cell `repeats` times, one run after another, recording it all in MLflow. Yields a plan event, then a
-    cell (or cell_error) event as each cell finishes and a run_end event per run. Close it (contextlib.aclosing) so an
-    interrupted matrix is recorded as KILLED."""
+    """Run every cell `repeats` times, one run after another, recording it all in MLflow. Yields a plan event; then,
+    within each run, a case_start and a case event per question as it takes an agent slot and is graded, a cell (or
+    cell_error) event as each cell finishes, and a run_end event. Close it (contextlib.aclosing) so an interrupted matrix
+    is recorded as KILLED."""
     params = {'models': ','.join(dict.fromkeys(c['model'] for c in cells)),
               'harness_modes': ','.join(dict.fromkeys('on' if c['harness_on'] else 'off' for c in cells)),
               'contexts': ','.join(dict.fromkeys(c['context'] for c in cells)),
@@ -146,13 +150,14 @@ async def run_matrix(cells: list[dict], questions: Sequence[dict], repeats: int,
     tracker = await asyncio.to_thread(tracking.MatrixTracker.start, cells=cells, questions=questions, params=params)
     limiter = asyncio.Semaphore(MAX_CONCURRENT_AGENT_RUNS)
 
-    async def run_cell(cell: dict, run_no: int) -> dict:
+    async def run_cell(cell: dict, run_no: int, events: asyncio.Queue) -> dict:
         try:
             report = await run_eval(
                 label=cell['id'], model=cell['model'], questions=questions, harness=cell['harness_on'],
                 context=cell['context'], limiter=limiter,
                 mlflow_run_id=tracker.cell_runs[cell['id']] if tracker else None,
                 trace_tags=tracker.trace_tags(cell['id'], run_no) if tracker else None,
+                emit=lambda event: events.put_nowait({**event, 'id': cell['id'], 'run': run_no}),
             )
         except Exception as e:
             error = f'{type(e).__name__}: {e}'
@@ -166,16 +171,26 @@ async def run_matrix(cells: list[dict], questions: Sequence[dict], repeats: int,
     yield {'type': 'plan', 'cells': cells, 'prompts': [q['text'] for q in questions], 'repeats': repeats,
            'mlflow': tracker.urls() if tracker else None}
     status = 'KILLED'  # stays KILLED if the matrix is interrupted, so History doesn't show it running forever
+    tasks: list[asyncio.Task] = []
     try:
         for run_no in range(1, repeats + 1):
             started = time.perf_counter()
-            for next_done in asyncio.as_completed([run_cell(c, run_no) for c in cells]):
-                yield await next_done
+            events: asyncio.Queue = asyncio.Queue()
+            tasks = [asyncio.create_task(run_cell(c, run_no, events)) for c in cells]
+            for task in tasks:  # each cell's final event goes on the queue after its case events
+                task.add_done_callback(lambda t: t.cancelled() or events.put_nowait(t.result()))
+            remaining = len(tasks)
+            while remaining:
+                event = await events.get()
+                remaining -= event['type'] in ('cell', 'cell_error')
+                yield event
             seconds = time.perf_counter() - started  # wall clock for the whole run, every cell included
             if tracker:
                 await asyncio.to_thread(tracker.log_run_time, run_no, seconds)
             yield {'type': 'run_end', 'run': run_no, 'seconds': seconds}
         status = 'FINISHED'
     finally:
+        for task in tasks:
+            task.cancel()
         if tracker:
             await asyncio.shield(asyncio.to_thread(tracker.finish, status))

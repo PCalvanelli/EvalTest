@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 from dataclasses import dataclass, field
@@ -251,7 +252,7 @@ async def answer_sql(output: SQLAnswer | MetricFlowAnswer | MalloyAnswer) -> str
         return output.sql
     if isinstance(output, MalloyAnswer):
         return await malloy_bridge.compile(output.malloy)
-    return metricflow_bridge.compile(output.query, getattr(output, 'metric_definitions', ()))
+    return await asyncio.to_thread(metricflow_bridge.compile, output.query, getattr(output, 'metric_definitions', ()))
 
 
 def _answer_text(output: SQLAnswer | MetricFlowAnswer | MalloyAnswer, sql: str) -> str:
@@ -314,7 +315,7 @@ def _final_answer_guard(context: Context, reviewer: AnthropicModel, log: Harness
         assert isinstance(output, (SQLAnswer, MetricFlowAnswer, MalloyAnswer))
         try:
             sql = await answer_sql(output)
-            result = db.run_readonly(sql, max_rows=10)
+            result = await asyncio.to_thread(db.run_readonly, sql, max_rows=10)
         except Exception as e:
             if log.exec_retries >= MAX_EXEC_RETRIES:
                 return GuardrailResult.allow()  # recorded as a failed answer, like the baseline, not a run error
