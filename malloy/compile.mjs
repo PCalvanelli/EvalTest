@@ -1,8 +1,8 @@
-// Malloy → DuckDB SQL compiler sidecar for the eval playground.
+// Malloy → DuckDB SQL compiler sidecar for Semantic Layer Bench.
 //
-// Protocol: JSON lines on stdin/stdout.
-//   1. {"type": "init", "ddl": "<CREATE SCHEMA/TABLE ...>", "model": "<.malloy text>"}  → {"id": "init", "ok": true}
-//   2. {"id": <any>, "query": "<malloy query>"}                                          → {"id", "sql"} | {"id", "error"}
+// Protocol: JSON lines on stdin/stdout, one reply per request, in order.
+//   1. {"init": true, "ddl": "<CREATE SCHEMA/TABLE ...>", "model": "<.malloy text>"}  → {"ok": true} | {"error"}
+//   2. {"query": "<malloy query>"}                                                   → {"sql"} | {"error"}
 // Tables are created EMPTY in an in-memory DuckDB: Malloy only needs column types to compile. Python
 // executes the SQL against the real warehouse, so the two DuckDB versions never share a file.
 
@@ -34,26 +34,26 @@ for await (const line of rl) {
   try {
     msg = JSON.parse(line);
   } catch {
-    send({ id: null, error: 'Invalid JSON request' });
+    send({ error: 'Invalid JSON request' });
     continue;
   }
-  if (msg.type === 'init') {
+  if (msg.init) {
     try {
       await init(msg);
-      send({ id: 'init', ok: true });
+      send({ ok: true });
     } catch (e) {
-      send({ id: 'init', error: String(e?.message ?? e) });
+      send({ error: String(e?.message ?? e) });
     }
     continue;
   }
   if (!model) {
-    send({ id: msg.id, error: 'Sidecar not initialized' });
+    send({ error: 'Sidecar not initialized' });
     continue;
   }
   try {
     const sql = await model.loadQuery(msg.query).getSQL();
-    send({ id: msg.id, sql });
+    send({ sql });
   } catch (e) {
-    send({ id: msg.id, error: String(e?.message ?? e) });
+    send({ error: String(e?.message ?? e) });
   }
 }

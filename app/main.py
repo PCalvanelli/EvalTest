@@ -2,30 +2,24 @@
 
 from __future__ import annotations
 
-import asyncio
-import itertools
 import json
 import os
-import time
 from collections.abc import AsyncIterator
+from contextlib import aclosing
 from pathlib import Path
 from typing import Literal
 
-os.environ.setdefault('PYDANTIC_AI_NO_BANNER', '1')
-os.environ.setdefault('MLFLOW_DISABLE_AGENT_HINT', '1')  # MLflow logs a coding-assistant hint on import otherwise
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, Field
 
-from fastapi import FastAPI, HTTPException, Request  # noqa: E402
-from fastapi.responses import FileResponse, StreamingResponse  # noqa: E402
-from fastapi.staticfiles import StaticFiles  # noqa: E402
-from pydantic import BaseModel, Field  # noqa: E402
-
-from . import db, harness_view, history, malloy_bridge, metricflow_bridge, mlflow_ui, tracking  # noqa: E402
-from .agent import CONTEXTS, HARNESS_CAPABILITIES, TARGET_NAMES, Context  # noqa: E402
-from .evals import run_eval  # noqa: E402
-from .pricing import PRICES_AS_OF, PRICING  # noqa: E402
+from . import harness_view, history, mlflow_ui, tracking
+from .agent import CONTEXTS, Context
+from .evals import matrix_cells, run_matrix
+from .questions import QUESTION_SETS
 
 STATIC = Path(__file__).resolve().parent.parent / 'static'
-MAX_CONCURRENT_AGENT_RUNS = 6
 
 app = FastAPI(title='Semantic Layer Bench')
 app.include_router(history.router)
@@ -40,27 +34,12 @@ async def revalidate_static(request: Request, call_next):
     return response
 
 
-class PromptIn(BaseModel):
-    text: str
-    expected_sql: str | None = None
-    match: Literal['rows', 'numbers'] = 'rows'  # numbers: compare only numeric columns (labels may vary)
-
-
 class RunRequest(BaseModel):
-    api_key: str = Field(min_length=1)
-    workspace_id: str | None = None
     models: list[str] = Field(min_length=1)
-    judge_model: str = 'claude-sonnet-5-5'
     harness_modes: list[bool] = Field(min_length=1)
     context_modes: list[Context] = Field(min_length=1)
-    harness: list[str] = Field(default_factory=lambda: [k for k, v in HARNESS_CAPABILITIES.items() if v['default']])
-    prompts: list[PromptIn] = Field(min_length=1)
-    rubric: str = Field(min_length=1)
+    question_set: Literal['benchmark', 'holdout'] = 'benchmark'
     repeats: int = Field(1, ge=1, le=10, description='Run the whole matrix this many times, one after another.')
-
-
-def cell_id(model: str, harness_on: bool, context: str) -> str:
-    return f'{model}|{"harness" if harness_on else "no-harness"}|{context}'
 
 
 @app.get('/')
@@ -71,102 +50,31 @@ def index() -> FileResponse:
 @app.get('/api/config')
 def config() -> dict:
     return {
-        'schema': db.schema_overview(),
-        'table_count': len(db.list_tables()),
-        'metricflow_catalog': metricflow_bridge.catalog_text(),
-        'metricflow_yaml': metricflow_bridge.model_yaml(),
-        'malloy_model': malloy_bridge.MODEL_TEXT,
         'contexts': CONTEXTS,
-        'pricing': PRICING,
-        'prices_as_of': PRICES_AS_OF,
-        'harness_capabilities': HARNESS_CAPABILITIES,
-        'harness_targets': TARGET_NAMES,
-        'mlflow': {'enabled': tracking.ENABLED, 'embedded': _MLFLOW_APP is not None, 'ui_url': tracking.UI_URL},
+        'question_sets': {name: len(qs) for name, qs in QUESTION_SETS.items()},
+        'api_key_set': bool(os.environ.get('ANTHROPIC_API_KEY')),
+        'mlflow_url': tracking.UI_URL if tracking.ENABLED else None,
     }
 
 
 @app.get('/api/harness/{context}')
 async def harness(context: Context, mode: Literal['on', 'off'] = 'on') -> dict:
-    """Read-only: what one target's agent sees with the default harness, or with none."""
-    return await harness_view.describe(
-        context, [k for k, v in HARNESS_CAPABILITIES.items() if v['default']] if mode == 'on' else [])
+    """Read-only: what one target's agent sees with the harness, or without it."""
+    return await harness_view.describe(context, mode == 'on')
 
 
 @app.post('/api/run')
 async def run(req: RunRequest) -> StreamingResponse:
-    """Run every (model, harness, context) cell `repeats` times, sequentially by run, and stream NDJSON:
-    one plan line, then a run_start line per run and one line per finished cell."""
-    if True in req.harness_modes and not req.harness:
-        raise HTTPException(status_code=422, detail='Harness "On" is selected but no harness capabilities are enabled.')
-    prompts = [p.model_dump() for p in req.prompts if p.text.strip()]
-    if not prompts:
-        raise HTTPException(status_code=422, detail='Add at least one prompt.')
-
-    cells = [
-        {'id': cell_id(m, h, ctx), 'model': m, 'harness_on': h, 'context': ctx}
-        for m, h, ctx in itertools.product(dict.fromkeys(req.models), dict.fromkeys(req.harness_modes),
-                                           dict.fromkeys(req.context_modes))
-    ]
-    limiter = asyncio.Semaphore(MAX_CONCURRENT_AGENT_RUNS)
-    workspace_id = (req.workspace_id or '').strip() or None
-    tracker = await asyncio.to_thread(
-        tracking.MatrixTracker.start,
-        cells=cells,
-        prompts=prompts,
-        rubric=req.rubric,
-        params={'models': ','.join(dict.fromkeys(req.models)),
-                'harness_modes': ','.join('on' if h else 'off' for h in dict.fromkeys(req.harness_modes)),
-                'contexts': ','.join(dict.fromkeys(req.context_modes)),
-                'harness_capabilities': ','.join(req.harness) or 'none',
-                'judge_model': req.judge_model, 'repeats': req.repeats, 'prompts': len(prompts)},
-        harness=req.harness,
-        judge_model=req.judge_model,
-    )
-
-    async def run_cell(cell: dict, run_no: int) -> dict:
-        try:
-            report = await run_eval(
-                label=cell['id'],
-                api_key=req.api_key,
-                workspace_id=workspace_id,
-                model=cell['model'],
-                judge_model=req.judge_model,
-                prompts=prompts,
-                rubric=req.rubric,
-                harness=req.harness if cell['harness_on'] else [],
-                context=cell['context'],
-                limiter=limiter,
-                mlflow_run_id=tracker.cell_runs[cell['id']] if tracker else None,
-                trace_tags=tracker.trace_tags(cell['id'], run_no) if tracker else None,
-            )
-        except Exception as e:
-            error = f'{type(e).__name__}: {e}'
-            if tracker:
-                await asyncio.to_thread(tracker.log_cell_error, cell['id'], run_no, error)
-            return {'type': 'cell_error', 'run': run_no, 'id': cell['id'], 'error': error}
-        if tracker:
-            await asyncio.to_thread(tracker.log_cell, cell['id'], run_no, report)
-        return {'type': 'cell', 'run': run_no, 'report': {**report, 'id': cell['id'], 'run': run_no}}
+    """Run the matrix and stream its events (see evals.run_matrix) as NDJSON, ending with a done line."""
+    if not os.environ.get('ANTHROPIC_API_KEY'):
+        raise HTTPException(status_code=422, detail='Set ANTHROPIC_API_KEY and restart the server.')
 
     async def stream() -> AsyncIterator[str]:
-        mlflow_urls = tracker.urls() if tracker else None
-        yield json.dumps({'type': 'plan', 'cells': cells, 'prompts': len(prompts), 'repeats': req.repeats,
-                          'mlflow': mlflow_urls}) + '\n'
-        status = 'KILLED'  # stays KILLED if the client disconnects mid-matrix
-        try:
-            for run_no in range(1, req.repeats + 1):
-                yield json.dumps({'type': 'run_start', 'run': run_no}) + '\n'
-                started = time.perf_counter()
-                for next_done in asyncio.as_completed([run_cell(c, run_no) for c in cells]):
-                    yield json.dumps(await next_done, default=str) + '\n'
-                seconds = time.perf_counter() - started  # wall clock for the whole run: every cell, judging included
-                if tracker:
-                    await asyncio.to_thread(tracker.log_run_time, run_no, seconds)
-                yield json.dumps({'type': 'run_end', 'run': run_no, 'seconds': seconds}) + '\n'
-            status = 'FINISHED'
-        finally:
-            if tracker:
-                await asyncio.shield(asyncio.to_thread(tracker.finish, status))
+        cells = matrix_cells(req.models, req.harness_modes, req.context_modes)
+        matrix = run_matrix(cells, QUESTION_SETS[req.question_set], req.repeats, {'question_set': req.question_set})
+        async with aclosing(matrix) as events:
+            async for event in events:
+                yield json.dumps(event, default=str) + '\n'
         yield json.dumps({'type': 'done'}) + '\n'
 
     return StreamingResponse(stream(), media_type='application/x-ndjson')
@@ -174,6 +82,5 @@ async def run(req: RunRequest) -> StreamingResponse:
 
 app.mount('/static', StaticFiles(directory=STATIC), name='static')
 # MLflow's own UI at /mlflow, from the same store. Mounted last: it answers every path our routes don't.
-_MLFLOW_APP = mlflow_ui.asgi_app()
-if _MLFLOW_APP is not None:
-    app.mount('/', _MLFLOW_APP)
+if (mlflow_app := mlflow_ui.asgi_app()) is not None:
+    app.mount('/', mlflow_app)

@@ -106,26 +106,18 @@ def schema_ddl(schema: str) -> str:
     return ';\n'.join([f'CREATE SCHEMA {schema}'] + [f'CREATE TABLE {schema}.{t} ({", ".join(c)})' for t, c in tables.items()])
 
 
-def schema_overview() -> str:
-    """Every table and column with descriptions, for display in the UI."""
-    out = []
-    for t in list_tables():
-        out.append(f"{t['table']}  ({t['rows']:,} rows)\n  {t['description']}")
-        for c in describe_table(t['table'])['columns']:
-            out.append(f"    {c['name']} {c['type']}" + (f"  -- {c['description']}" if c['description'] else ''))
-        out.append('')
-    return '\n'.join(out)
+def _read_only(sql: str) -> str:
+    """The query, if it is a single SELECT/WITH statement."""
+    stripped = sql.strip().rstrip(';').strip()
+    if not _READ_ONLY_START.match(stripped) or ';' in stripped:
+        raise ValueError('Only a single SELECT or WITH query is allowed.')
+    return stripped
 
 
 def run_readonly(sql: str, max_rows: int = MAX_ROWS) -> dict:
     """Run a single SELECT/WITH query. Returns columns, rows (capped) and total row count."""
-    stripped = sql.strip().rstrip(';').strip()
-    if not _READ_ONLY_START.match(stripped):
-        raise ValueError('Only a single SELECT or WITH query is allowed.')
-    if ';' in stripped:
-        raise ValueError('Only a single statement is allowed.')
     cur = connection().cursor()
-    cur.execute(stripped)
+    cur.execute(_read_only(sql))
     columns = [d[0] for d in cur.description]
     rows = cur.fetchall()
     return {
@@ -135,21 +127,12 @@ def run_readonly(sql: str, max_rows: int = MAX_ROWS) -> dict:
     }
 
 
-def result_set(sql: str) -> list[tuple]:
-    """Full, order-insensitive result set for comparing two queries."""
-    data = run_readonly(sql, max_rows=10_000)
-    return sorted((tuple(map(_normalize, r)) for r in data['rows']), key=repr)
-
-
 REL_TOL = 0.005  # numbers within 0.5% of each other match
 
 
 def _raw_rows(sql: str) -> list[tuple]:
     """Every row of a read-only query, unrounded (Decimals as floats), for comparing results."""
-    stripped = sql.strip().rstrip(';').strip()
-    if not _READ_ONLY_START.match(stripped) or ';' in stripped:
-        raise ValueError('Only a single SELECT or WITH query is allowed.')
-    rows = connection().cursor().execute(stripped).fetchmany(10_000)
+    rows = connection().cursor().execute(_read_only(sql)).fetchmany(10_000)
     return [tuple(float(v) if isinstance(v, Decimal) else v for v in r) for r in rows]
 
 
@@ -200,6 +183,7 @@ def results_match(actual_sql: str, expected_sql: str, mode: str = 'rows') -> boo
         return False
     perms = itertools.permutations(range(len(actual[0]))) if len(actual[0]) <= 6 else [tuple(range(len(actual[0])))]
     return any(_same_rows([tuple(r[i] for i in perm) for r in actual], expected) for perm in perms)
+
 
 def _normalize(v: object) -> object:
     if isinstance(v, float):

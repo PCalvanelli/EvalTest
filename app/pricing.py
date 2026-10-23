@@ -3,10 +3,7 @@
 Anthropic first-party list prices as of 2026-10-06. Cache reads for Opus/Sonnet are list prices; the Haiku
 cache read and all cache writes use Anthropic's standard multipliers (read = 0.1× input, 5-minute write =
 1.25× input). Haiku 5.5's price applies to prompts up to 100K tokens, which covers every request here.
-All values are editable in the UI, so this is only the starting point.
 """
-
-PRICES_AS_OF = '2026-10-06'
 
 PRICING: dict[str, dict[str, float]] = {
     'claude-opus-5-5': {'input': 4.00, 'output': 20.00, 'cache_read': 0.20, 'cache_write': 5.00},
@@ -16,7 +13,7 @@ PRICING: dict[str, dict[str, float]] = {
 
 
 def case_cost(case: dict, model: str) -> float:
-    """List-price USD cost of one case's token usage; mirrors caseCost() in static/index.html."""
+    """List-price USD cost of one case's token usage."""
     p = PRICING.get(model)
     if p is None or case.get('input_tokens') is None:
         return 0.0
