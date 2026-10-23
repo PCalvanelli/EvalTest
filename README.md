@@ -1,18 +1,26 @@
-# Semantic Layer Bench
+# Semantic Layer × Harness Bench
 
-**Which layer should an AI agent query to answer business questions: raw SQL (with or without a glossary), Malloy, or dbt MetricFlow?** This app measures it.
+**How much of an AI analytics agent's accuracy comes from the model, from the data interface it queries, and from the harness around it, and how do the three interact?** This app measures all three at once, against an eval with frozen correct answers.
 
-**Why it matters:** semantic layers promise more accurate answers than raw SQL. This puts numbers on accuracy, consistency and cost.
+**What kind of benchmark this is:** a configuration benchmark, not a model leaderboard or a semantic-layer shootout. A *setup* is one model × interface × harness. Every setup answers the same prompts over the same warehouse, under the same budget, graded the same way. Comparing setups that differ in one factor isolates that factor.
 
-## How it works
+| Benchmark kind | Holds fixed | Varies | Answers |
+|---|---|---|---|
+| Text-to-SQL / model benchmarks (e.g. Spider) | The interface (a raw schema) and the scaffolding | The model | Which model writes the best SQL? |
+| Semantic-layer benchmarks | The agent | The interface | Does a semantic layer help? |
+| **This bench** | Prompts, warehouse, grading, budgets | Model × interface × harness | How much each factor adds, and whether they interact: does a semantic layer matter less with a good harness, or a harness less with a strong model? |
 
-Each eval is a matrix. Every cell answers the same prompt set over the same DuckDB warehouse. Within a repeat, every cell's prompts run concurrently, six agents at a time across the matrix; repeats run one after another. Results stream in per prompt and are recorded in MLflow.
+**Why it matters:** a semantic layer and a harness both promise accuracy, at different costs. One is modeling work up front; the other is tokens and latency on every question. Knowing which buys more, for which model, tells you where to invest.
 
-| Axis | Options |
-|---|---|
-| Model | Opus / Sonnet / Haiku |
-| Agent | Baseline / harness |
-| Target | Raw SQL / Raw SQL + glossary / dbt MetricFlow / Malloy |
+## The three factors
+
+| Factor | Levels | What it isolates |
+|---|---|---|
+| Model | Opus / Sonnet / Haiku 5.5 | Raw model capability |
+| Data interface (*target*) | Raw SQL / Raw SQL + glossary / dbt MetricFlow / Malloy | Business knowledge: absent, given in words, or enforced by a semantic layer |
+| Harness | Baseline / harness | Process around the model (guardrails, review, retries), never business knowledge |
+
+Each run is a matrix of setups. Within a repeat, every setup's prompts run concurrently, six agents at a time across the matrix; repeats run one after another. Results stream in per prompt and are recorded in MLflow. To read one factor's effect, compare two setups that differ only in it: the **Compare** panel gives the paired difference with a 95% interval (see Scoring).
 
 **The warehouse:** 52 tables (raw → staging → marts) with seed data from 2024-01 to 2025-09.
 It holds **no business metrics**: *net revenue*, *MRR* and *churn* are defined only in the semantic layers (and, in words, the glossary).
@@ -40,7 +48,7 @@ It also has traps: look-alike tables, a deprecated mart, cancelled orders, mixed
 
 ## Results so far
 
-Sonnet 5.5 on 22 prompts, harness on. These runs were graded by rows match *and* an LLM judge, which has since been removed:
+Sonnet 5.5 on 22 prompts, harness on: one model and one harness level, so this shows the interface effect only. These runs were graded by rows match *and* an LLM judge, which has since been removed:
 
 | Target | Runs | Tokens per run | Pass |
 |---|---|---|---|

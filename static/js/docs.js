@@ -20,13 +20,14 @@ function pages() {
   return [
     {group: 'Overview', items: [
       {id: 'intro', title: 'Introduction', body: `
-        ${p('<strong>Which layer should an AI agent query to answer business questions?</strong> Semantic Layer Bench measures it. The same agent answers the same prompts over the same warehouse through different <em>targets</em>: raw SQL, raw SQL with a glossary, or a semantic layer.')}
-        ${callout('<strong>Why it matters:</strong> semantic layers promise more accurate answers than raw SQL. This app puts numbers on accuracy, consistency, cost and speed, so you can choose a setup on evidence instead of claims.')}
+        ${p('<strong>How much of an AI analytics agent’s accuracy comes from the model, from the data interface it queries, and from the harness around it?</strong> This app measures all three at once. A <strong>setup</strong> is one model × target × harness; every setup answers the same prompts over the same warehouse, under the same budget, graded against frozen correct answers.')}
+        ${p('That makes it a <em>configuration</em> benchmark. Model benchmarks hold the interface fixed and vary the model; semantic-layer benchmarks hold the agent fixed and vary the interface. This one varies all three, so it can show how much each adds and whether they interact: does a semantic layer matter less with a good harness?')}
+        ${callout('<strong>Why it matters:</strong> a semantic layer and a harness both promise accuracy, at different costs: modeling work up front, or tokens and latency on every question. This app puts numbers on accuracy, consistency, cost and speed, so you can choose on evidence instead of claims.')}
         <h3 class="mt-6 text-base font-semibold">The warehouse</h3>
         ${p('A DuckDB warehouse: 52 tables (raw → staging → marts) with seed data from 2024-01 to 2025-09. It holds <em>no business metrics</em>: net revenue, MRR and churn are defined only in the semantic layers (and, in words, the glossary).')}
         ${p('It also has traps an agent must avoid: look-alike tables, a deprecated mart, cancelled orders and mixed currencies.')}`},
       {id: 'how', title: 'How a run works', body: `
-        ${p('A run is a <strong>matrix</strong>. Each model × agent × target combination you pick is a <strong>setup</strong>, one cell in the results grid.')}
+        ${p('A run is a <strong>matrix</strong>. Each model × target × harness combination you pick is a <strong>setup</strong>, one cell in the results grid.')}
         ${table(['Step', 'What happens'], [
           ['<span class="whitespace-nowrap">1. Plan</span>', 'Every combination becomes a setup.'],
           ['2. Answer', 'Each setup answers every prompt in the prompt set. A fresh agent per prompt; six agents run at a time across the matrix.'],
@@ -201,7 +202,7 @@ function render(el) {
     </aside>
     <article class="max-w-[780px] pb-24 pt-8">
       <p class="text-sm text-ink-muted">Documentation</p>
-      <h1 class="mb-2 text-3xl font-semibold tracking-tight">Semantic Layer Bench</h1>
+      <h1 class="mb-2 text-3xl font-semibold tracking-tight">Semantic Layer × Harness Bench</h1>
       <p class="mb-8 text-[15px] leading-7 text-ink-muted">What this app is for, how a run works, and its HTTP API.</p>
       ${groups.map((g) => g.items.map((it) => `
         <section id="docs-${it.id}" data-section="${it.id}" class="scroll-mt-16 border-t border-border pt-8 mt-8 first:mt-0">

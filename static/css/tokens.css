@@ -1,4 +1,4 @@
-/* Design tokens for Semantic Layer Bench, modeled on base-ui.com.
+/* Design tokens for Semantic Layer × Harness Bench, modeled on base-ui.com.
  *
  * Interface colors are space-separated RGB channels so Tailwind can apply alpha (bg-accent/10); the
  * Tailwind config in index.html maps them to class names (bg-surface, text-ink-muted, border-border, ...).

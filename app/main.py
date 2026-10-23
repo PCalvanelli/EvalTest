@@ -21,7 +21,7 @@ from .questions import QUESTION_SETS
 
 STATIC = Path(__file__).resolve().parent.parent / 'static'
 
-app = FastAPI(title='Semantic Layer Bench')
+app = FastAPI(title='Semantic Layer × Harness Bench')
 app.include_router(history.router)
 
 

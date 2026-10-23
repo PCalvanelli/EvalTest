@@ -4011,7 +4011,7 @@ wheels = [
 ]
 
 [[package]]
-name = "semantic-layer-bench"
+name = "semantic-layer-harness-bench"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
