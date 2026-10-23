@@ -1,4 +1,4 @@
-"""A read-only description of one target's agent, with or without the harness: the instructions and tools the model
+"""A read-only description of one target's agent, as the baseline or with the harness: the instructions and tools the model
 actually sees (captured from a real build of the agent, so it can't drift from the code), plus the checks that run on
 tool calls and on the final answer. Nothing here calls Anthropic."""
 
@@ -35,10 +35,9 @@ def _tool(t, kind: str) -> dict:  # noqa: ANN001
 
 
 TOOL_GUARDS = {
-    'raw': 'Blocks run_sql calls that are not a single read-only SELECT or WITH query.',
-    'metricflow': "Compiles each query_metrics call (with its new definitions) first and blocks it if MetricFlow "
-                  "rejects it, so the agent gets the compiler's error instead of a failed run.",
-    'malloy': 'Compiles each run_malloy call first and blocks it if the Malloy compiler rejects it.',
+    'raw': 'Only a single read-only SELECT or WITH runs',
+    'metricflow': 'Compiled first; MetricFlow errors go back to the agent',
+    'malloy': 'Compiled first; Malloy errors go back to the agent',
 }
 
 LINTS = {

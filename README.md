@@ -11,7 +11,7 @@ Each eval is a matrix. Every cell answers the same questions over the same DuckD
 | Axis | Options |
 |---|---|
 | Model | Opus / Sonnet / Haiku |
-| Harness | Off / on |
+| Agent | Baseline / harness |
 | Target | Raw SQL / dbt MetricFlow / Malloy |
 
 **The warehouse:** 52 tables (raw → staging → marts) with seed data from 2024-01 to 2025-09.
@@ -24,7 +24,7 @@ It also has traps: look-alike tables, a deprecated mart, cancelled orders, mixed
 | dbt MetricFlow | Queries governed metrics from `dbt/`, and can define derived metrics from them | `query_metrics` |
 | Malloy | Writes Malloy against `app/malloy/warehouse.malloy`, which has the same definitions as dbt | `run_malloy` |
 
-**The harness** adds *process*, never business knowledge. It's one fixed set, on or off. The **Harness** tab shows exactly what each agent sees.
+**The baseline** is the model with only the target's query tools: a way to reach the data, nothing guiding or checking it. **The harness** adds *process* on top, never business knowledge. It's one fixed set. The **Harness** tab compares the two step by step.
 
 | Applies to | What it adds |
 |---|---|

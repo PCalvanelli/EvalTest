@@ -39,7 +39,7 @@ class RunRequest(BaseModel):
     harness_modes: list[bool] = Field(min_length=1)
     context_modes: list[Context] = Field(min_length=1)
     question_set: Literal['benchmark', 'holdout'] = 'benchmark'
-    repeats: int = Field(1, ge=1, le=10, description='Run the whole matrix this many times, one after another.')
+    repeats: int = Field(1, ge=1, le=10, description='Run everything this many times, one after another.')
 
 
 @app.get('/')

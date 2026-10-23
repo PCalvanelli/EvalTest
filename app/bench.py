@@ -43,8 +43,8 @@ async def main() -> None:
                 report = event['report']
                 reports.append(report)
                 failed = [c['name'] for c in report['cases'] if not c['passed']]
-                harness = 'harness' if report['harness_on'] else 'bare'
-                print(f'run {event["run"]}  {report["context"]:<10} {harness:<7}  pass {report["passed"]}/{report["total"]} '
+                harness = 'harness' if report['harness_on'] else 'baseline'
+                print(f'run {event["run"]}  {report["context"]:<10} {harness:<8}  pass {report["passed"]}/{report["total"]} '
                       f'({report["pass_rate"]:.1%})  tokens {report["total_tokens"]:,}  cost ${report["cost_usd"]:.2f}'
                       f'  failed: {", ".join(failed) or "-"}', flush=True)
             elif event['type'] == 'cell_error':
