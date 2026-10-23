@@ -6,7 +6,7 @@
 
 ## How it works
 
-Each eval is a matrix. Every cell answers the same questions over the same DuckDB warehouse. Within a repeat, every cell's questions run concurrently, six agents at a time across the matrix; repeats run one after another. Results stream in per question and are recorded in MLflow.
+Each eval is a matrix. Every cell answers the same prompt set over the same DuckDB warehouse. Within a repeat, every cell's prompts run concurrently, six agents at a time across the matrix; repeats run one after another. Results stream in per prompt and are recorded in MLflow.
 
 | Axis | Options |
 |---|---|
@@ -35,7 +35,7 @@ It also has traps: look-alike tables, a deprecated mart, cancelled orders, mixed
 
 ## Results so far
 
-Sonnet 5.5 on 22 questions, harness on. These runs were graded by rows match *and* an LLM judge, which has since been removed:
+Sonnet 5.5 on 22 prompts, harness on. These runs were graded by rows match *and* an LLM judge, which has since been removed:
 
 | Target | Runs | Tokens per run | Pass |
 |---|---|---|---|
@@ -44,17 +44,17 @@ Sonnet 5.5 on 22 questions, harness on. These runs were graded by rows match *an
 | Raw SQL | 1 | 616k | 12 / 22 |
 
 **The big picture:** raw SQL misses are mostly business definitions, the gap a semantic layer closes.
-Both semantic layers can express every question (`uv run python -m app.expressibility`), so their misses are agent errors.
+Both semantic layers can express every prompt (`uv run python -m app.expressibility`), so their misses are agent errors.
 
 ## Scoring
 
 | Measure | What it means |
 |---|---|
 | Pass | The final query runs and its rows match the reference SQL (order-insensitive, numbers within 0.5%) |
-| pass^k | Share of questions passed in *every* run. Use Runs ≥ 3: one question moves the score 4.5 points |
-| Cost | The agent's tokens (reviewer included) at list prices (`app/pricing.py`), per question |
+| pass^k | Share of prompts passed in *every* run. Use Runs ≥ 3: one prompt moves the score 4.5 points |
+| Cost | The agent's tokens (reviewer included) at list prices (`app/pricing.py`), per prompt |
 
-**Questions:** `app/questions.py`. The held-out set (10 questions) was written before tuning, so don't tune against it.
+**Prompt sets:** `app/questions.py`. The held-out set (10 prompts) was written before tuning, so don't tune against it.
 
 ## Run it
 
@@ -69,7 +69,7 @@ uv run uvicorn app.main:app --reload --reload-dir app --reload-dir static
 | Task | Command or setting |
 |---|---|
 | Benchmark from the command line | `uv run python -m app.bench --harness on off --runs 3` |
-| Check every question is expressible, and that MetricFlow and Malloy agree on every metric | `uv run python -m app.expressibility` |
+| Check every prompt is expressible, and that MetricFlow and Malloy agree on every metric | `uv run python -m app.expressibility` |
 | Rebuild the warehouse | `uv run python -m app.db` (it also rebuilds itself when its SQL changes) |
 | Use an MLflow server | `MLFLOW_TRACKING_URI` (default: `data/mlflow.db`) |
 | Turn off tracking | `EVAL_MLFLOW=off` |
@@ -89,8 +89,8 @@ uv run uvicorn app.main:app --reload --reload-dir app --reload-dir static
 | `dbt/`, `app/metricflow_bridge.py` | MetricFlow project and compiler |
 | `app/malloy/`, `app/malloy_bridge.py`, `malloy/` | Malloy model and compiler |
 | `app/agent.py` | Agents and harness |
-| `app/questions.py` | Questions and reference SQL |
-| `app/evals.py` | Running and grading a question set, and running a matrix (UI and CLI) |
+| `app/questions.py` | Prompt sets and reference SQL |
+| `app/evals.py` | Running and grading a prompt set, and running a matrix (UI and CLI) |
 | `app/tracking.py`, `app/history.py` | MLflow recording and read API |
 | `app/main.py` | FastAPI server |
 | `static/` | UI (ES modules, no build). Design tokens in `static/css/tokens.css` |

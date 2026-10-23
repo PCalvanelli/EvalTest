@@ -85,7 +85,7 @@ function pager(page, pages, total, shown) {
 const answers = (m) => (m.params.prompts ? fmtInt(m.cells.length * m.params.prompts * (m.params.repeats ?? 1)) : '—');
 const plural = (n, word) => `${n} ${word}${+n === 1 ? '' : 's'}`;
 const answersDetail = (m) =>
-  `${plural(m.cells.length, 'setup')} × ${plural(m.params.prompts ?? '?', 'question')} × ${plural(m.params.repeats ?? 1, 'repeat')}`;
+  `${plural(m.cells.length, 'setup')} × ${plural(m.params.prompts ?? '?', 'prompt')} × ${plural(m.params.repeats ?? 1, 'repeat')}`;
 
 // Total spend at list prices: each setup's average cost per question × questions × repeats it completed.
 // Setups with no completed repeat have no recorded cost, and runs from before cost tracking have none at all.

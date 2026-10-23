@@ -116,7 +116,7 @@ function answering(d) {
 function limits(d, base) {
   const s = d.settings, b = base?.settings;
   return lines([
-    line(`Up to ${s.retries} retries per question.`, !!b && s.retries !== b.retries),
+    line(`Up to ${s.retries} retries per prompt.`, !!b && s.retries !== b.retries),
     line(s.prompt_cache ? 'Prompt caching on: repeated input costs 0.1×.' : 'No prompt caching: all input at full price.', !!b && s.prompt_cache !== b.prompt_cache),
   ]);
 }
