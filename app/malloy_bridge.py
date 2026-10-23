@@ -48,23 +48,36 @@ class _Sidecar:
             self.proc = None
             raise MalloyError(f'Malloy model failed to compile: {reply["error"]}')
 
+    def _stop(self) -> None:
+        if self.proc is not None and self.proc.returncode is None:
+            self.proc.kill()
+        self.proc = None
+
     async def _request(self, msg: dict) -> dict:
         assert self.proc and self.proc.stdin and self.proc.stdout
-        self.proc.stdin.write((json.dumps(msg) + '\n').encode())
-        await self.proc.stdin.drain()
-        line = await self.proc.stdout.readline()
+        try:
+            self.proc.stdin.write((json.dumps(msg) + '\n').encode())
+            await self.proc.stdin.drain()
+            line = await self.proc.stdout.readline()
+        except BaseException:
+            # Interrupted (a cancelled case, or a broken pipe): its reply may still arrive, and the next request
+            # would read it as its own. Start over with a fresh process instead.
+            self._stop()
+            raise
         if not line:
+            self._stop()
             raise SidecarError('Malloy sidecar exited unexpectedly.')
         return json.loads(line)
 
     async def compile(self, query: str) -> str:
         loop = asyncio.get_running_loop()
-        if self.loop is not loop or self.proc is None or self.proc.returncode is not None:
+        if self.loop is not loop:  # a lock and pipes belong to one event loop
+            self._stop()
             self.loop, self.lock = loop, asyncio.Lock()
-            async with self.lock:
-                await self._start()
         assert self.lock is not None
-        async with self.lock:
+        async with self.lock:  # one process, one request at a time, so each reply is the request's own
+            if self.proc is None or self.proc.returncode is not None:
+                await self._start()
             reply = await self._request({'query': query})
         if 'error' in reply:
             raise MalloyError(reply['error'])
