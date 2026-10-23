@@ -10,19 +10,21 @@ from collections.abc import AsyncIterator, Callable, Sequence
 
 import mlflow
 
-from . import db, tracking
+from . import db, gold, tracking
 from .agent import Context, HarnessLog, MalloyAnswer, MetricFlowAnswer, answer_sql, build_agent
 from .pricing import case_cost
 
 MAX_CONCURRENT_AGENT_RUNS = 6
+# Bump when what a pass means changes (grading, budgets, targets, questions), so History can tell which matrices compare.
+BENCHMARK_VERSION = 2
 
 
 def grade(sql: str | None, error: str | None, question: dict) -> tuple[bool, str | None]:
-    """Pass when the final query runs and returns the reference's rows; otherwise say why not."""
+    """Pass when the final query runs and returns the question's frozen reference rows; otherwise say why not."""
     if error is not None:
         return False, f'Query failed: {error}'
     try:
-        if db.results_match(sql, question['expected_sql'], question.get('match', 'rows')):
+        if db.rows_match(db.all_rows(sql), gold.rows(question['id']), question.get('match', 'rows')):
             return True, None
     except Exception as e:
         return False, f'Could not compare with the reference: {e}'
@@ -85,7 +87,7 @@ async def run_eval(
     emit: Callable[[dict], None] = lambda event: None,
 ) -> dict:
     async def case(i: int, question: dict) -> dict:
-        name = f'q{i + 1}'
+        name = question['id']
         # One MLflow trace per case: the agent, model and tool spans nest under this root span. The limiter is shared
         # by every cell in the matrix, so `seconds` excludes queueing.
         async with limiter:
@@ -143,10 +145,11 @@ async def run_matrix(cells: list[dict], questions: Sequence[dict], repeats: int,
     within each run, a case_start and a case event per question as it takes an agent slot and is graded, a cell (or
     cell_error) event as each cell finishes, and a run_end event. Close it (contextlib.aclosing) so an interrupted matrix
     is recorded as KILLED."""
-    params = {'models': ','.join(dict.fromkeys(c['model'] for c in cells)),
+    gold.check(questions)  # before any MLflow run is opened, so a stale reference never starts a matrix
+    params = {'benchmark_version': BENCHMARK_VERSION, 'models': ','.join(dict.fromkeys(c['model'] for c in cells)),
               'harness_modes': ','.join(dict.fromkeys('on' if c['harness_on'] else 'off' for c in cells)),
               'contexts': ','.join(dict.fromkeys(c['context'] for c in cells)),
-              'repeats': repeats, 'prompts': len(questions), **params}
+              'repeats': repeats, 'prompts': len(questions), **tracking.provenance(), **params}
     tracker = await asyncio.to_thread(tracking.MatrixTracker.start, cells=cells, questions=questions, params=params)
     limiter = asyncio.Semaphore(MAX_CONCURRENT_AGENT_RUNS)
 

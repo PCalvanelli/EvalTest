@@ -12,8 +12,11 @@ disable. A tracking failure is logged and never fails an eval.
 
 from __future__ import annotations
 
+import importlib.metadata
+import json
 import logging
 import os
+import subprocess
 import threading
 import time
 from collections.abc import Iterator, Sequence
@@ -63,6 +66,35 @@ def experiment_id() -> str | None:
         _log.exception('MLflow tracking disabled: could not reach %s', TRACKING_URI)
         ENABLED = False
     return _experiment_id
+
+
+ROOT = Path(__file__).resolve().parent.parent
+PACKAGES = ('duckdb', 'pydantic-ai-slim', 'metricflow', 'dbt-core', 'dbt-duckdb')
+
+
+def provenance() -> dict[str, str]:
+    """What produced a matrix's results, logged as params: code version, warehouse build, frozen references, tools."""
+    from . import db, gold  # gold imports the questions; keep tracking importable on its own
+
+    def git(*args: str) -> str:
+        try:
+            return subprocess.run(['git', *args], cwd=ROOT, capture_output=True, text=True, timeout=5).stdout.strip()
+        except (OSError, subprocess.SubprocessError):
+            return ''
+
+    out = {'git_sha': git('rev-parse', 'HEAD') or 'unknown', 'git_dirty': str(bool(git('status', '--porcelain'))),
+           'warehouse_hash': db._BUILD_HASH, 'gold_checksum': gold.checksum() or 'none'}
+    for name in PACKAGES:
+        try:
+            out[f'version.{name}'] = importlib.metadata.version(name)
+        except importlib.metadata.PackageNotFoundError:
+            pass
+    try:
+        lock = json.loads((ROOT / 'malloy' / 'package-lock.json').read_text())
+        out['version.malloy'] = lock['packages']['node_modules/@malloydata/malloy']['version']
+    except (OSError, KeyError, ValueError):
+        pass
+    return out
 
 
 @contextmanager

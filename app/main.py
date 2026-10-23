@@ -14,9 +14,9 @@ from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import harness_view, history, mlflow_ui, tracking
+from . import gold, harness_view, history, mlflow_ui, tracking
 from .agent import CONTEXTS, Context
-from .evals import matrix_cells, run_matrix
+from .evals import BENCHMARK_VERSION, matrix_cells, run_matrix
 from .questions import QUESTION_SETS
 
 STATIC = Path(__file__).resolve().parent.parent / 'static'
@@ -51,6 +51,7 @@ def index() -> FileResponse:
 def config() -> dict:
     return {
         'contexts': CONTEXTS,
+        'benchmark_version': BENCHMARK_VERSION,
         'question_sets': {name: len(qs) for name, qs in QUESTION_SETS.items()},
         'api_key_set': bool(os.environ.get('ANTHROPIC_API_KEY')),
         'mlflow_url': tracking.UI_URL if tracking.ENABLED else None,
@@ -68,6 +69,10 @@ async def run(req: RunRequest) -> StreamingResponse:
     """Run the matrix and stream its events (see evals.run_matrix) as NDJSON, ending with a done line."""
     if not os.environ.get('ANTHROPIC_API_KEY'):
         raise HTTPException(status_code=422, detail='Set ANTHROPIC_API_KEY and restart the server.')
+    try:
+        gold.check(QUESTION_SETS[req.question_set])
+    except gold.GoldError as e:
+        raise HTTPException(status_code=409, detail=str(e)) from None
 
     async def stream() -> AsyncIterator[str]:
         cells = matrix_cells(req.models, req.harness_modes, req.context_modes)

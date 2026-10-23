@@ -3,7 +3,7 @@ in MLflow like the UI's, so they show up in History. Needs ANTHROPIC_API_KEY.
 
     uv run python -m app.bench                                  # Sonnet, harness on, MetricFlow and Malloy, 1 run
     uv run python -m app.bench --contexts metricflow --runs 3
-    uv run python -m app.bench --harness off --cases 13,14      # baseline, two questions
+    uv run python -m app.bench --harness off --cases b13,b14    # baseline, two questions
     uv run python -m app.bench --harness on off                 # both, side by side
 """
 
@@ -25,7 +25,7 @@ async def main() -> None:
     parser.add_argument('--contexts', nargs='+', default=['metricflow', 'malloy'], choices=['raw', 'metricflow', 'malloy'])
     parser.add_argument('--harness', nargs='+', choices=['on', 'off'], default=['on'])
     parser.add_argument('--set', default='benchmark', choices=list(QUESTION_SETS))
-    parser.add_argument('--cases', help='Comma-separated 1-based question numbers (default: all).')
+    parser.add_argument('--cases', help='Comma-separated question ids (b13) or 1-based numbers (default: all).')
     parser.add_argument('--runs', type=int, default=1)
     parser.add_argument('--out', help='Write every report to this JSON file.')
     args = parser.parse_args()
@@ -34,7 +34,8 @@ async def main() -> None:
 
     questions = QUESTION_SETS[args.set]
     if args.cases:
-        questions = [questions[int(i) - 1] for i in args.cases.split(',')]
+        by_id = {q['id']: q for q in questions}
+        questions = [by_id[c] if c in by_id else questions[int(c) - 1] for c in args.cases.split(',')]
     cells = matrix_cells([args.model], [h == 'on' for h in args.harness], args.contexts)
     reports = []
     async with aclosing(run_matrix(cells, questions, args.runs, {'question_set': args.set, 'source': 'bench'})) as events:

@@ -6,6 +6,7 @@ import hashlib
 import itertools
 import math
 import re
+from collections.abc import Sequence
 from decimal import Decimal
 from pathlib import Path
 
@@ -130,7 +131,7 @@ def run_readonly(sql: str, max_rows: int = MAX_ROWS) -> dict:
 REL_TOL = 0.005  # numbers within 0.5% of each other match
 
 
-def _raw_rows(sql: str) -> list[tuple]:
+def all_rows(sql: str) -> list[tuple]:
     """Every row of a read-only query, unrounded (Decimals as floats), for comparing results."""
     rows = connection().cursor().execute(_read_only(sql)).fetchmany(10_000)
     return [tuple(float(v) if isinstance(v, Decimal) else v for v in r) for r in rows]
@@ -140,28 +141,28 @@ def _is_number(v: object) -> bool:
     return isinstance(v, (int, float)) and not isinstance(v, bool)
 
 
-def _cells_equal(a: object, b: object) -> bool:
+def _cells_equal(a: object, b: object, rel_tol: float) -> bool:
     if _is_number(a) and _is_number(b):
-        return math.isclose(a, b, rel_tol=REL_TOL, abs_tol=1e-9)
+        return math.isclose(a, b, rel_tol=rel_tol, abs_tol=1e-9)
     if a is None or b is None:
         return a is None and b is None
     return _normalize(str(a) if not isinstance(a, (str, bool)) else a) == _normalize(str(b) if not isinstance(b, (str, bool)) else b)
 
 
-def _same_rows(actual: list[tuple], expected: list[tuple]) -> bool:
+def _same_rows(actual: list[tuple], expected: list[tuple], rel_tol: float) -> bool:
     """Row multisets equal, cell by cell with numeric tolerance (greedy pairing; rows are rarely near-duplicates)."""
     if len(actual) != len(expected):
         return False
     unused = list(actual)
     for row in expected:
-        hit = next((i for i, cand in enumerate(unused) if all(_cells_equal(x, y) for x, y in zip(cand, row))), None)
+        hit = next((i for i, cand in enumerate(unused) if all(_cells_equal(x, y, rel_tol) for x, y in zip(cand, row))), None)
         if hit is None:
             return False
         unused.pop(hit)
     return True
 
 
-def _numeric_columns(rows: list[tuple]) -> list[tuple]:
+def _numeric_columns(rows: list[Sequence]) -> list[tuple]:
     """Keep only the columns that hold numbers (labels, names, dates and flags dropped)."""
     if not rows:
         return rows
@@ -171,10 +172,14 @@ def _numeric_columns(rows: list[tuple]) -> list[tuple]:
 
 
 def results_match(actual_sql: str, expected_sql: str, mode: str = 'rows') -> bool:
-    """Same rows as the expected query, ignoring row and column order (Spider-style execution match), with numbers
-    equal within REL_TOL. Extra or missing columns still fail. mode='numbers' compares only the numeric columns,
+    """rows_match on the results of two queries."""
+    return rows_match(all_rows(actual_sql), all_rows(expected_sql), mode)
+
+
+def rows_match(actual: list[Sequence], expected: list[Sequence], mode: str = 'rows', rel_tol: float = REL_TOL) -> bool:
+    """Same rows as the expected ones, ignoring row and column order (Spider-style execution match), with numbers
+    equal within rel_tol. Extra or missing columns still fail. mode='numbers' compares only the numeric columns,
     for questions whose labels can legitimately vary (TRUE/FALSE vs 'first'/'repeat')."""
-    actual, expected = _raw_rows(actual_sql), _raw_rows(expected_sql)
     if mode == 'numbers':
         actual, expected = _numeric_columns(actual), _numeric_columns(expected)
     if not actual or not expected:
@@ -182,7 +187,7 @@ def results_match(actual_sql: str, expected_sql: str, mode: str = 'rows') -> boo
     if len(actual[0]) != len(expected[0]):
         return False
     perms = itertools.permutations(range(len(actual[0]))) if len(actual[0]) <= 6 else [tuple(range(len(actual[0])))]
-    return any(_same_rows([tuple(r[i] for i in perm) for r in actual], expected) for perm in perms)
+    return any(_same_rows([tuple(r[i] for i in perm) for r in actual], expected, rel_tol) for perm in perms)
 
 
 def _normalize(v: object) -> object:
