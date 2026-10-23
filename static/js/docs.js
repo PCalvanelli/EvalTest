@@ -4,6 +4,7 @@
 
 import {$, $$, esc} from './ui.js';
 import {app} from './config.js';
+import {targetIcon, withIcon} from './icons.js';
 
 const ext = (href, text) => `<a class="link whitespace-nowrap" href="${href}" target="_blank" rel="noopener">${text} ↗</a>`;
 const table = (head, rows) => `<div class="my-4 overflow-x-auto rounded-panel border border-border">
@@ -16,7 +17,7 @@ const callout = (html) => `<div class="my-4 rounded-panel border border-border b
 
 // The site map: sidebar groups, each with its pages, in reading order.
 function pages() {
-  const targets = Object.values(app.config.contexts).map((c) => [`<span class="whitespace-nowrap font-medium">${esc(c.name)}</span>`, esc(c.summary)]);
+  const targets = Object.entries(app.config.contexts).map(([id, c]) => [withIcon(targetIcon(id), `<span class="font-medium">${esc(c.name)}</span>`), esc(c.summary)]);
   return [
     {group: 'Overview', items: [
       {id: 'intro', title: 'Introduction', body: `

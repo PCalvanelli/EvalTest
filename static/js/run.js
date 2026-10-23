@@ -5,12 +5,13 @@ import {$, $$, esc} from './ui.js';
 import {app, freshState, models} from './config.js';
 import {postJSON, readNdjson} from './api.js';
 import {renderAll, renderProgress, renderRunTimes, selectCell} from './results.js';
+import {modelIcon, targetIcon} from './icons.js';
 
 const check = '<svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 6.5l2.5 2.5 4.5-5"/></svg>';
 
-function chip(group, value, label, checked, title = '') {
+function chip(group, value, label, checked, title = '', icon = '') {
   return `<label${title ? ` title="${esc(title)}"` : ''}><input type="checkbox" name="${group}" value="${esc(value)}"
-    class="peer sr-only" ${checked ? 'checked' : ''}><span class="chip"><span class="chip-box" aria-hidden="true">${check}</span>${esc(label)}</span></label>`;
+    class="peer sr-only" ${checked ? 'checked' : ''}><span class="chip"><span class="chip-box" aria-hidden="true">${check}</span>${icon}${esc(label)}</span></label>`;
 }
 
 const checkedValues = (group) => $$(`input[name=${group}]:checked`).map((i) => i.value);
@@ -35,7 +36,7 @@ function showStatus(msg, kind = 'info') {
 export function renderModelChoices() {
   const picked = new Set(checkedValues('model'));
   const keep = picked.size > 0;
-  $('#modelChoices').innerHTML = models().map((m) => chip('model', m.id, m.name, keep ? picked.has(m.id) : m.checked)).join('');
+  $('#modelChoices').innerHTML = models().map((m) => chip('model', m.id, m.name, keep ? picked.has(m.id) : m.checked, '', modelIcon())).join('');
   $$('input[name=model]').forEach((i) => i.onchange = updateCount);
   if (keep && !checkedValues('model').length) $$('input[name=model]')[0].checked = true;
   updateCount();
@@ -45,7 +46,7 @@ export function initRun(cfg) {
   renderModelChoices();
   $('#harnessChoices').innerHTML = chip('harness', 'false', 'Baseline', true, 'The model with only the target’s query tools: nothing guiding or checking it') + chip('harness', 'true', 'Harness', true, 'The baseline plus the harness: extra guidance, query and answer checks, a reviewer, more retries');
   $('#contextChoices').innerHTML = Object.entries(cfg.contexts)
-    .map(([id, c]) => chip('context', id, c.name, true, c.summary)).join('');
+    .map(([id, c]) => chip('context', id, c.name, true, c.summary, targetIcon(id))).join('');
   $('#questionSet').innerHTML = Object.entries(cfg.question_sets).map(([name, n]) =>
     `<option value="${esc(name)}">${name === 'holdout' ? 'Held-out' : 'Benchmark'} (${n} prompts)</option>`).join('');
   $$('input[name=harness], input[name=context]').forEach((i) => i.onchange = updateCount);
