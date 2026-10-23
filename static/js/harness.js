@@ -39,11 +39,11 @@ export async function showHarness(params) {
 
 function render(off, on) {
   const steps = [
-    ['What the agent is told', 'Instructions sent with every model call.', told(off, on, false), told(on, off, true)],
-    ['What the agent can use', 'The tools it calls to query data and to answer.', tools(off, on, false), tools(on, off, true)],
-    ['When it runs a query', 'What happens before and after each query.', querying(off), querying(on, off)],
-    ['When it gives an answer', 'Whether the answer is checked before it counts.', answering(off), answering(on)],
-    ['Retries and caching', 'How much room it has to recover, and how input is billed.', limits(off), limits(on, off)],
+    ['Instructions', told(off, on, false), told(on, off, true)],
+    ['Tools', tools(off, on, false), tools(on, off, true)],
+    ['Each query', querying(off), querying(on, off)],
+    ['The answer', answering(off), answering(on)],
+    ['Retries and caching', limits(off), limits(on, off)],
   ];
   return `
     <p class="mb-4 max-w-[80ch] text-sm text-ink-muted">${esc(on.target.summary)}</p>
@@ -51,14 +51,14 @@ function render(off, on) {
       <div class="hidden border-b border-border bg-surface-2 text-xs font-medium text-ink-muted md:grid md:grid-cols-[200px_minmax(0,1fr)_minmax(0,1fr)]">
         <div class="px-4 py-2">Step</div><div class="px-4 py-2">Baseline</div><div class="px-4 py-2">With harness</div>
       </div>
-      ${steps.map(([title, hint, without, withH]) => `
+      ${steps.map(([title, without, withH]) => `
         <div class="grid border-b border-border last:border-b-0 md:grid-cols-[200px_minmax(0,1fr)_minmax(0,1fr)]">
-          <div class="px-4 pb-1 pt-3 md:py-3"><div class="text-sm font-medium">${title}</div><div class="hint">${hint}</div></div>
+          <div class="px-4 pb-1 pt-3 md:py-3"><div class="text-sm font-medium">${title}</div></div>
           <div class="px-4 py-2 md:py-3"><div class="mb-1 text-xs font-medium text-ink-muted md:hidden">Baseline</div>${without}</div>
           <div class="px-4 pb-3 pt-2 md:py-3"><div class="mb-1 text-xs font-medium text-ink-muted md:hidden">With harness</div>${withH}</div>
         </div>`).join('')}
     </div>
-    <p class="hint mt-2">Token counts are estimates (characters ÷ 4). <span class="font-medium text-ink">New</span> marks what the harness adds; <span class="line-through">struck</span> items are replaced by it.</p>`;
+    <p class="hint mt-2"><span class="font-medium text-ink">New</span>: added by the harness. <span class="line-through">Struck</span>: replaced by it. Tokens ≈ characters ÷ 4.</p>`;
 }
 
 const tokens = (chars) => `≈ ${fmtInt(chars / 4)} tokens`;
@@ -107,7 +107,7 @@ function querying(d, base) {
 
 function answering(d) {
   if (!d.answer_checks.length) return line('The first answer is final. Nothing checks it.');
-  return `${line(`Checked ${d.answer_checks.length} ways, in order. A failed check sends the answer back to fix.`, true)}
+  return `${line(`${d.answer_checks.length} checks, in order. A failed one sends the answer back.`, true)}
     <div class="mt-2">${stack(d.answer_checks.map((c, i) => item(`${i + 1}. ${esc(c.title)}`, `up to ${esc(c.limit)}`, `
       <p class="text-sm text-ink-muted">${esc(c.text)}</p>
       ${c.instructions ? `<p class="mt-2 text-xs font-medium text-ink-muted">Reviewer instructions</p>

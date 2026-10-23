@@ -46,8 +46,7 @@ function render() {
   $('#settingsBody').innerHTML = `
   <section class="panel p-4">
     <h2 class="text-base font-semibold">Models</h2>
-    <p class="hint">The models offered on the Run tab. Prices are USD per million tokens and turn token use into cost; leave
-      them blank and cost isn’t tracked for that model. “Default” models start picked.</p>
+    <p class="hint">Offered on the Run tab. Prices are USD per million tokens; leave them blank to skip cost.</p>
     <div class="mt-3 overflow-x-auto">
       <table class="data-table w-full text-sm">
         <tr><th>Name</th><th>Model id</th><th class="!text-center">Default</th>
@@ -63,12 +62,12 @@ function render() {
     <div class="mt-3 flex flex-wrap gap-x-8 gap-y-4">
       <label class="flex flex-col"><span class="group-label">Concurrency</span>
         ${input(`id="concurrency" type="number" min="1" max="20" step="1" value="${s.concurrency}"`, 'w-24 tabular-nums')}
-        <span class="hint mt-1">Agents running at once across a run (1–20). Higher is faster, until rate limits hit.</span></label>
+        <span class="hint mt-1">Agents at once, 1–20. Higher is faster until rate limits hit.</span></label>
       <label class="flex flex-col"><span class="group-label">Failure labeler</span>
         <select id="labeler" class="input mt-0 w-auto self-start py-1.5 text-sm">
           ${labelerChoices.map((id) => `<option value="${esc(id)}" ${id === s.labeler_model ? 'selected' : ''}>${esc(s.models.find((m) => m.id === id)?.name ?? id)}</option>`).join('')}
         </select>
-        <span class="hint mt-1">The model that labels why wrong answers failed (<code>python -m app.labels</code>).</span></label>
+        <span class="hint mt-1">Labels why wrong answers failed.</span></label>
     </div>
   </section>
 
@@ -78,18 +77,17 @@ function render() {
       title="Delete ${esc(info.path)} and use the defaults">Reset to defaults</button>
     <span id="settingsStatus" class="text-sm" role="status"></span>
   </div>
-  <p class="hint mt-2">Saved on this machine in <code>${esc(info.path)}</code> (not in git). The next run uses them; a run already going keeps its settings.</p>
+  <p class="hint mt-2">Saved in <code>${esc(info.path)}</code> on this machine. A run already going keeps its settings.</p>
 
   <section class="panel mt-6 p-4">
     <h2 class="text-base font-semibold">Read-only</h2>
-    <p class="hint">Set outside the app, so they can’t be changed by accident.</p>
     <table class="data-table mt-3 w-full text-sm">
       <tr><td class="w-56">Anthropic API key</td><td>${info.api_key_set ? '<span class="badge badge-pass">Set</span>' : '<span class="badge badge-fail">Not set</span>'}
-        <span class="ml-2 text-ink-muted">From <code>ANTHROPIC_API_KEY</code>; set it and restart the server to change it. The value is never shown.</span></td></tr>
+        <span class="ml-2 text-ink-muted">From <code>ANTHROPIC_API_KEY</code>. Restart the server after changing it.</span></td></tr>
       <tr><td>MLflow</td><td>${info.mlflow ? `<code class="break-all">${esc(info.mlflow)}</code>` : 'Off (<code>EVAL_MLFLOW=off</code>)'}
         <span class="ml-2 text-ink-muted">From <code>MLFLOW_TRACKING_URI</code>.</span></td></tr>
       <tr><td>Per-prompt limits</td><td class="tabular-nums">${info.limits.tool_call_limit} tool calls · ${info.limits.token_limit.toLocaleString()} tokens · ${info.limits.case_timeout_s} s
-        <span class="ml-2 text-ink-muted">In <code>app/evals.py</code>: changing them changes what a pass means, so it’s a code change with a new benchmark version.</span></td></tr>
+        <span class="ml-2 text-ink-muted">In <code>app/evals.py</code>. Changing them needs a new benchmark version.</span></td></tr>
       <tr><td>Benchmark version</td><td class="tabular-nums">v${info.benchmark_version}</td></tr>
     </table>
   </section>`;

@@ -101,7 +101,7 @@
         <div id="modelChoices" class="flex flex-wrap gap-1.5"></div>
       </fieldset>
       <fieldset>
-        <legend class="group-label">Agent</legend>
+        <legend class="group-label">Harness</legend>
         <div id="harnessChoices" class="flex gap-1.5"></div>
       </fieldset>
       <fieldset class="min-w-0">
@@ -138,23 +138,15 @@
     <div data-pane="overview" role="tabpanel">
     <div id="winner" class="mb-3 hidden" aria-live="polite"></div>
     <section id="matrixWrap" class="panel hidden p-4">
-      <div class="mb-1 flex flex-wrap items-baseline justify-between gap-3">
-        <p class="hint">Pass rate per setup. Open one to see its answers.</p>
-        <div class="flex items-center gap-3 text-xs">
-          <a id="mlflowLink" target="_blank" rel="noopener" class="hidden text-ink-muted hover:text-ink"
-             title="Open this run in MLflow">in MLflow ↗</a>
-        </div>
+      <div class="mb-3 flex flex-wrap items-baseline justify-between gap-3 text-xs text-ink-muted">
+        <p id="runTimes" class="hidden tabular-nums" aria-live="off"></p>
+        <a id="mlflowLink" target="_blank" rel="noopener" class="ml-auto hidden hover:text-ink"
+           title="Open this run in MLflow">in MLflow ↗</a>
       </div>
-      <details class="mb-3 text-xs text-ink-muted">
-        <summary class="cursor-pointer select-none hover:text-ink">Timing and cost</summary>
-        <p id="runTimes" class="mt-1.5 hidden text-sm tabular-nums" aria-live="off"></p>
-        <p class="hint mt-1.5">Time includes waiting for other setups. Cost uses the model prices in <a class="link" href="#/settings">Settings</a>.</p>
-      </details>
       <div class="overflow-x-auto"><table id="matrix" class="w-full border-separate border-spacing-1.5 text-sm"></table></div>
     </section>
     <section id="compareWrap" class="panel mt-3 hidden p-4">
-      <p class="hint">Compare two setups prompt by prompt. A difference is clear when its 95% interval leaves out zero;
-        with a few dozen prompts, gaps under about 15 points rarely are.</p>
+      <h2 class="panel-title">Compare</h2>
       <div class="mt-3 flex flex-wrap items-center gap-2 text-sm">
         <label class="flex items-center gap-1.5"><span class="font-medium">A</span><select id="cmpA" class="input mt-0 w-auto py-1.5"></select></label>
         <span class="text-ink-muted">vs.</span>
@@ -165,9 +157,7 @@
     </div>
     <div data-pane="ranking" role="tabpanel" hidden>
     <section class="panel p-4">
-      <p class="hint">Every setup ranked by one score out of 100, weighted across accuracy, cost and speed. Cost and speed
-        are scored against the best setup in this run: the cheapest scores 100 on cost, and one costing twice as much
-        scores 50. The small grey numbers are those scores.</p>
+      <p class="hint">One score out of 100. Cost and speed score against this run’s best: twice the cost scores 50.</p>
       <div id="weights" class="mt-4 flex flex-wrap items-end gap-x-6 gap-y-3"></div>
       <div id="rankingNote"></div>
       <div class="mt-4 overflow-x-auto"><table id="ranking" class="data-table w-full text-sm"></table></div>
@@ -182,8 +172,7 @@
     <div id="detail"></div>
     </div>
     <div id="empty" class="empty">
-      Pick models, harness and targets, then press Run. Results fill in as each setup finishes.
-      Past runs are in <a class="link" href="#/history">History</a>.
+      Pick a setup and press Run. Past runs are in <a class="link" href="#/history">History</a>.
     </div>
   </main>
 </div>
@@ -194,7 +183,6 @@
     <div class="mb-4 flex flex-wrap items-end justify-between gap-3">
       <div>
         <h1 class="text-xl font-semibold tracking-tight">History</h1>
-        <p class="hint">Every past run. Open one to see its results.</p>
       </div>
       <button id="historyRefresh" type="button" class="btn btn-outline">Refresh</button>
     </div>
@@ -209,7 +197,7 @@
 <div id="view-harness" class="view mx-auto max-w-[1500px] p-4 lg:p-6" hidden>
   <div class="mb-4">
     <h1 class="text-xl font-semibold tracking-tight">Harness</h1>
-    <p class="hint">How the agent answers a prompt, step by step: the baseline (the model with only the target’s query tools) vs. with the harness. Open any item to read it.</p>
+    <p class="hint">What the agent gets, baseline vs. harness. Open any item to read it.</p>
   </div>
   <div id="harnessControls" class="mb-4 flex flex-wrap items-center gap-x-6 gap-y-2"></div>
   <div id="harnessBody"></div>
@@ -219,7 +207,6 @@
 <div id="view-settings" class="view mx-auto max-w-[1100px] p-4 lg:p-6" hidden>
   <div class="mb-4">
     <h1 class="text-xl font-semibold tracking-tight">Settings</h1>
-    <p class="hint">A lightweight local config: which models to offer and what they cost, and how runs are paced.</p>
   </div>
   <div id="settingsBody"></div>
 </div>
@@ -231,8 +218,8 @@
 
 <script type="module" src="/static/js/app.js"></script>
 <footer class="mx-auto max-w-[1500px] px-4 pb-6 pt-10 text-[11px] leading-5 text-ink-subtle lg:px-6">
-  dbt, dbt MetricFlow and the dbt logo are trademarks of dbt Labs, LLC. The Malloy logo belongs to the Malloy project.
-  They’re shown only to identify the technologies this bench compares; it isn’t affiliated with or endorsed by either.
+  dbt, dbt MetricFlow and the dbt logo are trademarks of dbt Labs, LLC; the Malloy logo belongs to the Malloy project.
+  Shown only to identify the technologies compared. Not affiliated with or endorsed by either.
 </footer>
 </body>
 </html>
