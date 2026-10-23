@@ -7,6 +7,7 @@ import {register, route} from './router.js';
 import {initRun, showRun} from './run.js';
 import {showHistory} from './history.js';
 import {showHarness} from './harness.js';
+import {showDocs} from './docs.js';
 
 async function init() {
   const cfg = await getJSON('/api/config');
@@ -20,6 +21,7 @@ async function init() {
   register('run', showRun);
   register('history', (params) => showHistory(params));
   register('harness', (params) => showHarness(params));
+  register('docs', showDocs);
   window.addEventListener('hashchange', route);
   route();
 }
