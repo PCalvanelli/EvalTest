@@ -1,67 +1,70 @@
-/* Design tokens for Semantic Layer Bench.
+/* Design tokens for Semantic Layer Bench, modeled on base-ui.com.
  *
  * Interface colors are space-separated RGB channels so Tailwind can apply alpha (bg-accent/10); the
  * Tailwind config in index.html maps them to class names (bg-surface, text-ink-muted, border-border, ...).
  *
- * Dark mode is its own set of steps, not an inversion. It follows the OS.
+ * Neutral grays with no hue. The primary is near-black (near-white in dark); blue is kept for links and
+ * focus only. Dark mode is its own set of steps, not an inversion. It follows the OS.
  */
 
 :root {
   color-scheme: light;
 
-  --bg: 244 245 242;            /* graph-paper ground */
+  --bg: 252 252 252;            /* page ground */
   --surface: 255 255 255;       /* panels */
-  --surface-2: 238 240 236;     /* insets: stats, hovers, selected tab */
-  --border: 220 223 216;
-  --border-strong: 190 195 187;
-  --ink: 26 33 30;              /* body text */
-  --ink-muted: 86 94 90;        /* secondary text, >= 4.5:1 on surface */
-  --ink-subtle: 120 128 123;    /* placeholders, axis ticks */
+  --surface-2: 243 243 243;     /* insets: stats, hovers */
+  --border: 235 235 235;        /* hairline */
+  --border-strong: 224 224 224;
+  --ink: 46 46 46;              /* body text */
+  --ink-muted: 118 118 118;     /* secondary text, >= 4.5:1 on surface */
+  --ink-subtle: 153 153 153;    /* placeholders, axis ticks */
 
-  --accent: 19 97 111;          /* petrol ink: interaction only (focus, primary, selection) */
-  --accent-hover: 14 79 91;
+  --accent: 23 23 23;           /* primary: buttons, selected chips, spinner */
+  --accent-hover: 46 46 46;
   --accent-fg: 255 255 255;
-  --accent-soft: 222 238 240;
+  --accent-soft: 240 240 240;
+  --link: 0 121 250;            /* links and focus ring */
 
   --success: 31 122 77;
-  --success-soft: 225 241 231;
+  --success-soft: 230 243 235;
   --danger: 179 38 30;
-  --danger-soft: 249 227 225;
+  --danger-soft: 250 230 228;
   --warning: 146 86 0;
-  --warning-soft: 251 239 217;
+  --warning-soft: 251 240 220;
 
-  --code-bg: 26 33 30;          /* SQL / Malloy / JSON blocks stay dark in both modes */
-  --code-fg: 226 232 228;
+  --code-bg: 249 249 249;       /* SQL / Malloy / JSON blocks follow the mode */
+  --code-fg: 46 46 46;
 
   --radius-control: 6px;
-  --radius-panel: 10px;
-  --font-sans: 'Instrument Sans', ui-sans-serif, system-ui, sans-serif;
-  --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  --radius-panel: 8px;
+  --font-sans: 'Geist', ui-sans-serif, system-ui, sans-serif;
+  --font-mono: 'Geist Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
     color-scheme: dark;
-    --bg: 17 21 19;
-    --surface: 25 30 28;
-    --surface-2: 34 40 37;
-    --border: 46 54 50;
-    --border-strong: 70 79 74;
-    --ink: 231 235 232;
-    --ink-muted: 167 176 171;
-    --ink-subtle: 128 137 132;
-    --accent: 92 195 214;
-    --accent-hover: 132 212 226;
-    --accent-fg: 8 30 35;
-    --accent-soft: 21 51 57;
+    --bg: 19 19 19;
+    --surface: 26 26 26;
+    --surface-2: 33 33 33;
+    --border: 41 41 41;
+    --border-strong: 82 82 82;
+    --ink: 230 230 230;
+    --ink-muted: 179 179 179;
+    --ink-subtle: 140 140 140;
+    --accent: 245 245 245;
+    --accent-hover: 220 220 220;
+    --accent-fg: 19 19 19;
+    --accent-soft: 41 41 41;
+    --link: 83 168 253;
     --success: 102 199 145;
-    --success-soft: 22 51 36;
+    --success-soft: 24 46 34;
     --danger: 240 132 122;
-    --danger-soft: 64 28 26;
+    --danger-soft: 60 28 26;
     --warning: 228 176 92;
-    --warning-soft: 58 42 18;
-    --code-bg: 12 15 14;
-    --code-fg: 220 226 222;
+    --warning-soft: 54 40 20;
+    --code-bg: 22 22 22;
+    --code-fg: 220 220 220;
   }
 }
 
@@ -74,7 +77,7 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 code, pre, kbd { font-family: var(--font-mono); }
-:focus-visible { outline: 2px solid rgb(var(--accent)); outline-offset: 2px; border-radius: 4px; }
+:focus-visible { outline: 2px solid rgb(var(--link)); outline-offset: 2px; border-radius: 4px; }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }

@@ -6,7 +6,7 @@
   <title>Semantic Layer Bench</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500&display=swap">
   <link rel="stylesheet" href="/static/css/tokens.css">
   <script src="https://cdn.tailwindcss.com/3.4.17"></script>
   <script>
@@ -23,6 +23,7 @@
             success: {DEFAULT: token('success'), soft: token('success-soft')},
             danger: {DEFAULT: token('danger'), soft: token('danger-soft')},
             warning: {DEFAULT: token('warning'), soft: token('warning-soft')},
+            link: token('link'),
             code: {bg: token('code-bg'), fg: token('code-fg')},
           },
           borderColor: {DEFAULT: token('border')},
@@ -35,26 +36,26 @@
   <style type="text/tailwindcss">
     @layer components {
       .panel { @apply bg-surface border border-border rounded-panel; }
-      .panel-title { @apply text-[15px] font-semibold text-ink; }
+      .panel-title { @apply text-[15px] font-semibold tracking-tight text-ink; }
       .hint { @apply text-xs leading-relaxed text-ink-muted; }
       .group-label { @apply mb-1.5 text-[13px] font-medium text-ink-muted; }
-      .input { @apply mt-1 w-full rounded-control border border-border bg-surface px-3 py-2 text-sm text-ink placeholder:text-ink-subtle focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/30; }
+      .input { @apply mt-1 w-full rounded-control border border-border bg-surface px-3 py-2 text-sm text-ink placeholder:text-ink-subtle focus:border-ink-subtle focus:outline-none focus:ring-2 focus:ring-link/30; }
       .btn { @apply inline-flex items-center justify-center gap-1.5 rounded-control px-3 py-1.5 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50; }
       .btn-primary { @apply bg-accent text-accent-fg hover:bg-accent-hover; }
       .btn-outline { @apply border border-border bg-surface text-ink hover:bg-surface-2; }
       .btn-quiet { @apply text-ink-muted hover:bg-surface-2 hover:text-ink; }
-      .link { @apply text-accent underline-offset-2 hover:underline; }
-      .chip { @apply block cursor-pointer select-none rounded-control border border-border bg-surface px-3 py-1.5 text-sm text-ink-muted hover:border-border-strong peer-checked:border-accent peer-checked:bg-accent peer-checked:text-accent-fg peer-focus-visible:ring-2 peer-focus-visible:ring-accent/50; }
-      .badge { @apply inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-xs font-semibold; }
+      .link { @apply text-link underline-offset-2 hover:underline; }
+      .chip { @apply block cursor-pointer select-none rounded-control border border-border bg-surface px-3 py-1.5 text-sm text-ink-muted hover:border-border-strong peer-checked:border-accent peer-checked:bg-accent peer-checked:text-accent-fg peer-focus-visible:ring-2 peer-focus-visible:ring-link/50; }
+      .badge { @apply inline-flex shrink-0 items-center gap-1 rounded-control px-1.5 py-0.5 text-xs font-semibold; }
       .badge-pass { @apply bg-success-soft text-success; }
       .badge-fail { @apply bg-danger-soft text-danger; }
       .badge-neutral { @apply bg-surface-2 text-ink-muted; }
-      .tab { @apply rounded-control px-3 py-1.5 text-sm text-ink-muted hover:text-ink; }
-      .tab[aria-current="page"] { @apply bg-surface-2 font-medium text-ink; }
+      .tab { @apply border-b border-transparent px-1 py-1 text-sm text-ink-muted hover:text-ink; }
+      .tab[aria-current="page"] { @apply border-ink font-medium text-ink; }
       .stat { @apply rounded-control bg-surface-2 px-3 py-2; }
       .stat-label { @apply text-xs text-ink-muted; }
       .stat-value { @apply text-lg font-semibold tabular-nums text-ink; }
-      .code { @apply overflow-x-auto rounded-control bg-code-bg p-3 font-mono text-xs leading-relaxed text-code-fg; }
+      .code { @apply overflow-x-auto rounded-control border border-border bg-code-bg p-3 font-mono text-xs leading-relaxed text-code-fg; }
       .data-table th { @apply whitespace-nowrap px-2 py-1.5 text-left align-bottom text-xs font-medium text-ink-muted; }
       .data-table td { @apply border-t border-border px-2 py-1.5; }
       .notice { @apply rounded-panel border px-3 py-2.5 text-sm; }
@@ -68,12 +69,12 @@
 </head>
 <body class="min-h-screen">
 
-<header class="sticky top-0 z-30 border-b border-border bg-surface/90 backdrop-blur">
+<header class="sticky top-0 z-30 border-b border-border bg-bg">
   <div class="mx-auto flex max-w-[1500px] flex-wrap items-center gap-x-6 gap-y-2 px-4 py-2.5 lg:px-6">
     <a href="#/run" class="flex items-baseline gap-2 text-ink">
       <span class="text-[17px] font-semibold tracking-tight">Semantic Layer Bench</span>
     </a>
-    <nav class="flex flex-wrap items-center gap-1" aria-label="Views">
+    <nav class="flex flex-wrap items-center gap-4" aria-label="Views">
       <a class="tab" href="#/run" data-tab="run">Run</a>
       <a class="tab" href="#/history" data-tab="history">History</a>
       <a class="tab" href="#/harness" data-tab="harness">Harness</a>
