@@ -20,7 +20,7 @@ function updateCount() {
   const cells = checkedValues('model').length * checkedValues('harness').length * checkedValues('context').length;
   const n = app.config.question_sets[$('#questionSet').value];
   const runs = repeats();
-  $('#runBtn').title = `${cells} setup${cells === 1 ? '' : 's'} × ${n} questions` +
+  $('#runBtn').title = `${cells} setup${cells === 1 ? '' : 's'} × ${n} prompts` +
     `${runs > 1 ? ` × ${runs} repeats` : ''} = ${cells * n * runs} answers`;
 }
 
@@ -37,7 +37,7 @@ export function initRun(cfg) {
   $('#contextChoices').innerHTML = Object.entries(cfg.contexts)
     .map(([id, c]) => chip('context', id, c.name, true, c.summary)).join('');
   $('#questionSet').innerHTML = Object.entries(cfg.question_sets).map(([name, n]) =>
-    `<option value="${esc(name)}">${name === 'holdout' ? 'Held-out' : 'Benchmark'} (${n})</option>`).join('');
+    `<option value="${esc(name)}">${name === 'holdout' ? 'Held-out' : 'Benchmark'} (${n} prompts)</option>`).join('');
   $$('input[name=model], input[name=harness], input[name=context]').forEach((i) => i.onchange = updateCount);
   $('#repeats').oninput = updateCount;
   $('#questionSet').onchange = updateCount;
