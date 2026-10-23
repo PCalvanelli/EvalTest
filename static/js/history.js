@@ -1,7 +1,7 @@
 // History tab: every run in the MLflow store (#/history), and one past run on its own page (#/history?run=<id>).
 
 import {$, esc, pct, fmtInt, fmtDate, fmtDur, fmtUSD, empty, loading, errorBox} from './ui.js';
-import {modelName, contextName, cellLabel, freshState} from './config.js';
+import {app, modelName, contextName, cellLabel, freshState} from './config.js';
 import {getJSON} from './api.js';
 import {go} from './router.js';
 import {showResults, prefill} from './run.js';
@@ -108,11 +108,18 @@ function durationCell(m) {
   return `<td class="whitespace-nowrap text-right tabular-nums" title="${esc(`${fmtInt(ms)} ms · ${fmtDur(s)}${soFar}`)}">${Math.log10(ms).toFixed(2)}${soFar}</td>`;
 }
 
+// Matrices graded under another benchmark version (before ids and frozen references: none recorded) don't compare.
+function versionNote(m) {
+  const v = m.params.benchmark_version ?? '1';
+  if (v === String(app.config.benchmark_version)) return '';
+  return `<span class="block text-xs text-ink-muted" title="Graded under benchmark v${esc(v)}; this app is v${esc(String(app.config.benchmark_version))}. Scores don't compare.">v${esc(v)} · not comparable</span>`;
+}
+
 function row(m) {
   const d = describe(m);
   const best = bestCell(m);
   return `<tr>
-    <td class="whitespace-nowrap">${esc(fmtDate(m.start_time))}</td>
+    <td class="whitespace-nowrap">${esc(fmtDate(m.start_time))}${versionNote(m)}</td>
     <td>${esc(d.models)}</td>
     <td class="max-w-[320px]">${esc(d.contexts)}<span class="block text-xs text-ink-muted">${esc(d.harness)}</span></td>
     <td class="text-right tabular-nums" title="${esc(answersDetail(m))}">${answers(m)}</td>
@@ -173,6 +180,7 @@ function toState(m) {
     errors: m.errors,
     runSeconds: m.run_seconds ?? {},
     totalSeconds: m.seconds,
+    matrixId: m.id,
     mlflow: {matrix: m.mlflow_url,
              cells: Object.fromEntries(m.cells.map((c) => [c.id, c.mlflow_url]).filter(([, u]) => u))},
   });

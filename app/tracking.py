@@ -12,8 +12,11 @@ disable. A tracking failure is logged and never fails an eval.
 
 from __future__ import annotations
 
+import importlib.metadata
+import json
 import logging
 import os
+import subprocess
 import threading
 import time
 from collections.abc import Iterator, Sequence
@@ -65,6 +68,35 @@ def experiment_id() -> str | None:
     return _experiment_id
 
 
+ROOT = Path(__file__).resolve().parent.parent
+PACKAGES = ('duckdb', 'pydantic-ai-slim', 'metricflow', 'dbt-core', 'dbt-duckdb')
+
+
+def provenance() -> dict[str, str]:
+    """What produced a matrix's results, logged as params: code version, warehouse build, frozen references, tools."""
+    from . import db, gold  # gold imports the questions; keep tracking importable on its own
+
+    def git(*args: str) -> str:
+        try:
+            return subprocess.run(['git', *args], cwd=ROOT, capture_output=True, text=True, timeout=5).stdout.strip()
+        except (OSError, subprocess.SubprocessError):
+            return ''
+
+    out = {'git_sha': git('rev-parse', 'HEAD') or 'unknown', 'git_dirty': str(bool(git('status', '--porcelain'))),
+           'warehouse_hash': db._BUILD_HASH, 'gold_checksum': gold.checksum() or 'none'}
+    for name in PACKAGES:
+        try:
+            out[f'version.{name}'] = importlib.metadata.version(name)
+        except importlib.metadata.PackageNotFoundError:
+            pass
+    try:
+        lock = json.loads((ROOT / 'malloy' / 'package-lock.json').read_text())
+        out['version.malloy'] = lock['packages']['node_modules/@malloydata/malloy']['version']
+    except (OSError, KeyError, ValueError):
+        pass
+    return out
+
+
 @contextmanager
 def span(run_id: str | None, name: str, inputs: object) -> Iterator[LiveSpan | None]:
     """An agent root span (one trace) linked to an MLflow run; yields None when the run isn't tracked."""
@@ -91,7 +123,7 @@ class MatrixTracker:
         self.client = client
         self.parent_id = parent_id
         self.cell_runs = cell_runs
-        self.outcomes: dict[str, dict[int, list[bool]]] = {cid: {} for cid in cell_runs}
+        self.outcomes: dict[str, dict[int, list[bool | None]]] = {cid: {} for cid in cell_runs}  # None: infra error
         self.costs: dict[str, dict[int, float]] = {cid: {} for cid in cell_runs}
 
     @classmethod
@@ -151,17 +183,24 @@ class MatrixTracker:
             'requests': report['requests'],
             'cost_usd': cost,
             'cost_per_question_usd': cost / n,
+            'infra_errors': report.get('infra_errors', 0),
+            'over_budget': report.get('over_budget', 0),
+            'timeouts': report.get('timeouts', 0),
+            'partial': report.get('partial', 0),
         }
         ts = int(time.time() * 1000)
         self.client.log_batch(run_id, metrics=[Metric(k, float(v), ts, run_no) for k, v in values.items()])
         self.client.log_dict(run_id, report, f'run-{run_no}/report.json')  # lets History re-render this run
-        self.outcomes[cell_id][run_no] = [c['passed'] for c in cases]
+        self.outcomes[cell_id][run_no] = [None if c.get('status') == 'infra_error' else c['passed'] for c in cases]
         self.costs[cell_id][run_no] = cost / n
 
         for c in cases:
-            if c.get('trace_id'):
+            if c.get('trace_id') and c.get('status') != 'infra_error':
                 mlflow.log_feedback(trace_id=c['trace_id'], name='passed', value=c['passed'], rationale=c['reason'],
                                     source=AssessmentSource('CODE', 'results_match'))
+                if c.get('failure_label'):  # a rule's label; LLM labels are logged by app.labels
+                    mlflow.log_feedback(trace_id=c['trace_id'], name='failure_label', value=c['failure_label'],
+                                        source=AssessmentSource('CODE', 'app.labels rules'))
 
     def log_run_time(self, run_no: int, seconds: float) -> None:
         """Wall-clock seconds for one run of the whole matrix, on the parent run at step = run number."""
@@ -186,7 +225,9 @@ class MatrixTracker:
                 for cell_id, run_id in self.cell_runs.items():
                     runs = self.outcomes[cell_id]
                     if runs:
-                        per_prompt = list(zip(*runs.values()))
+                        # A question's infra-error runs are left out; one with no scored run at all drops out entirely.
+                        per_prompt = [[x for x in p if x is not None] for p in zip(*runs.values())]
+                        per_prompt = [p for p in per_prompt if p]
                         values = {
                             'mean_pass_rate': sum(sum(r) / max(len(r), 1) for r in runs.values()) / len(runs),
                             'pass_k': sum(all(p) for p in per_prompt) / max(len(per_prompt), 1),

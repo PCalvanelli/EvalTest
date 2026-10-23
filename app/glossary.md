@@ -13,6 +13,8 @@ orders never count.
 - **Units sold**: units on valid orders.
 - **Product revenue**: order-line amounts after discounts on valid orders, before refunds.
 - **First / repeat order**: a customer's orders in the order they were placed; the first is their first order.
+- **Median days between orders**: the median number of days from a customer's order to their next one. "First to
+  second" is the gap after each customer's first order.
 
 ## Membership
 - **MRR (monthly recurring revenue)**: at a month end, the sum of monthly prices (annual plans divided by 12) of

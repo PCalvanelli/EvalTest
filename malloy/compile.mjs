@@ -1,4 +1,4 @@
-// Malloy → DuckDB SQL compiler sidecar for Semantic Layer Bench.
+// Malloy → DuckDB SQL compiler sidecar for Semantic Layer × Harness Bench.
 //
 // Protocol: JSON lines on stdin/stdout, one reply per request, in order.
 //   1. {"init": true, "ddl": "<CREATE SCHEMA/TABLE ...>", "model": "<.malloy text>"}  → {"ok": true} | {"error"}

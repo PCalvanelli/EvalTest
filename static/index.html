@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Semantic Layer Bench</title>
+  <title>Semantic Layer × Harness Bench</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500&display=swap">
@@ -78,7 +78,7 @@
 <header class="sticky top-0 z-30 border-b border-border bg-bg">
   <div class="mx-auto flex max-w-[1500px] flex-wrap items-center gap-x-6 gap-y-2 px-4 py-2.5 lg:px-6">
     <a href="#/run" class="flex items-baseline gap-2 text-ink">
-      <span class="text-[17px] font-semibold tracking-tight">Semantic Layer Bench</span>
+      <span class="text-[17px] font-semibold tracking-tight">Semantic Layer × Harness Bench</span>
     </a>
     <nav class="flex flex-wrap items-center gap-4" aria-label="Views">
       <a class="tab" href="#/run" data-tab="run">Run</a>
@@ -118,6 +118,8 @@
       </label>
       <div class="flex flex-wrap items-center gap-x-4 gap-y-2 lg:ml-auto">
         <button id="runBtn" type="submit" class="btn btn-primary px-5 py-2.5">Run</button>
+        <button id="stopBtn" type="button" class="btn btn-outline hidden px-5 py-2.5"
+                title="Stop this run. Finished repeats stay in History.">Stop</button>
       </div>
     </div>
   </form>
@@ -148,6 +150,16 @@
         <p class="hint mt-1.5">Time includes waiting for other setups. Cost uses list prices (<code>app/pricing.py</code>).</p>
       </details>
       <div class="overflow-x-auto"><table id="matrix" class="w-full border-separate border-spacing-1.5 text-sm"></table></div>
+    </section>
+    <section id="compareWrap" class="panel mt-3 hidden p-4">
+      <p class="hint">Compare two setups prompt by prompt. A difference is clear when its 95% interval leaves out zero;
+        with a few dozen prompts, gaps under about 15 points rarely are.</p>
+      <div class="mt-3 flex flex-wrap items-center gap-2 text-sm">
+        <label class="flex items-center gap-1.5"><span class="font-medium">A</span><select id="cmpA" class="input mt-0 w-auto py-1.5"></select></label>
+        <span class="text-ink-muted">vs.</span>
+        <label class="flex items-center gap-1.5"><span class="font-medium">B</span><select id="cmpB" class="input mt-0 w-auto py-1.5"></select></label>
+      </div>
+      <div id="cmpResult" class="mt-3 text-sm" aria-live="polite"></div>
     </section>
     </div>
     <div data-pane="ranking" role="tabpanel" hidden>

@@ -56,14 +56,15 @@ const weightSummary = (noCost) => FACTORS.filter((f) => !(noCost && f.key === 'c
   .map((f) => `${f.label.toLowerCase()} ${share(f.key, noCost)}%`).join(', ');
 const score100 = (s) => Math.round(100 * s);
 
-/** The winner callout above the grid. `final`: every setup has finished. */
-export function winnerHtml({ranked, noCost}, final) {
+/** The winner callout above the grid. `final`: every setup has finished. `note`: trusted HTML shown under it. */
+export function winnerHtml({ranked, noCost}, final, note = '') {
   if (!ranked.length) return '';
   const w = ranked[0];
   return `<div class="notice notice-ok flex flex-wrap items-baseline gap-x-3 gap-y-1">
     <span class="font-semibold">${final ? 'Winner' : 'Leading so far'}: ${esc(w.label)}</span>
     <span class="tabular-nums text-ink-muted">score ${score100(w.score)} · ${pct(w.accuracy)} pass · ${noCost ? '' : `${fmtUSD(w.cost)} / prompt · `}${fmtS(w.seconds)} / prompt</span>
     <button type="button" data-goto="ranking" class="link ml-auto text-xs">Weighted ${esc(weightSummary(noCost))} · see ranking</button>
+    ${note ? `<span class="basis-full text-xs tabular-nums text-ink-muted">${note}</span>` : ''}
   </div>`;
 }
 

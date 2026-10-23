@@ -4,10 +4,28 @@
 import {$, $$, esc, mean, fmtS, fmtDur, pct, fmtUSD, passTint, spinner, stat, passBadge} from './ui.js';
 import {app, contextIds, contextName, cellId, cellLabel, modelName, comboLabel} from './config.js';
 import {rank, winnerHtml, tableHtml, initWeights, renderShares} from './ranking.js';
+import {passRateCI, pairedCompare, quantile} from './stats.js';
 
 // All finished reports for a cell, in run order.
 const reportsFor = (id) => Object.keys(app.state.runs).map(Number).sort((a, b) => a - b)
   .map((run) => app.state.runs[run][id]).filter(Boolean);
+
+// Infrastructure errors (provider or compiler failures) are retried, then left out of every score.
+const scored = (c) => c && c.status !== 'infra_error';
+
+// A setup's outcomes per prompt: 1/0 for each scored repeat, in prompt order (what stats.js works on).
+const perPrompt = (id) => app.state.prompts.map((_, i) => reportsFor(id).map((r) => r.cases[i]).filter(scored).map((c) => (c.passed ? 1 : 0)));
+const range = ([lo, hi]) => `${pct(lo)}–${pct(hi)}`;
+const points = (x) => `${x > 0 ? '+' : x < 0 ? '−' : ''}${Math.abs(100 * x).toFixed(1)}`;
+// Intervals change only when a setup finishes a repeat, but results re-render on every progress frame: cache them.
+const ciCache = new WeakMap();  // state -> {'<setup>@<repeats>': interval}
+function cachedCI(id, rs) {
+  const cache = ciCache.get(app.state) ?? ciCache.set(app.state, {}).get(app.state);
+  const key = `${id}@${rs.map((r) => r.run).join(',')}`;
+  if (!(key in cache)) cache[key] = passRateCI(perPrompt(id));
+  return cache[key];
+}
+const CI_TITLE = 'Likely range of the pass rate on another set of similar prompts (95% bootstrap interval over prompts)';
 
 // Question-level progress for a cell's runs that have no report yet (live runs only).
 const pendingProgress = (id) => Object.entries(app.state.progress ?? {})
@@ -28,15 +46,19 @@ function aggregate(id) {
     tool_calls: mean(rs.map((r) => r.tool_calls)),
     // Matrices logged before costs were computed server side have no cost_usd.
     cost: rs.every((r) => r.cost_usd != null) ? mean(rs.map((r) => r.cost_usd / Math.max(r.total, 1))) : null,
+    infra: rs.reduce((n, r) => n + (r.infra_errors ?? 0), 0),
+    ci: cachedCI(id, rs),
     ...consistency(rs),
   };
 }
 
-// pass^k: share of prompts that passed in EVERY finished run. Flaky: passed in some runs but not all.
+// pass^k: share of prompts that passed in EVERY finished run. Flaky: passed in some runs but not all. Runs with an
+// infrastructure error don't count for that prompt; a prompt with no scored run drops out.
 function consistency(rs) {
-  const outcomes = app.state.prompts.map((_, i) => rs.map((r) => Boolean(r.cases[i]?.passed)));
+  const outcomes = app.state.prompts.map((_, i) => rs.map((r) => r.cases[i]).filter(scored).map((c) => Boolean(c.passed)));
+  const counted = outcomes.filter((xs) => xs.length);
   return {
-    pass_k: outcomes.filter((xs) => xs.every(Boolean)).length / Math.max(outcomes.length, 1),
+    pass_k: counted.filter((xs) => xs.every(Boolean)).length / Math.max(counted.length, 1),
     flaky: outcomes.flatMap((xs, i) => (xs.some(Boolean) && !xs.every(Boolean) ? [i] : [])),
   };
 }
@@ -73,7 +95,7 @@ function ranking() {
 
 function renderRanking() {
   const r = ranking();
-  $('#winner').innerHTML = winnerHtml(r, r.final);
+  $('#winner').innerHTML = winnerHtml(r, r.final, edgeNote(r.ranked));
   $('#winner').classList.toggle('hidden', !r.ranked.length);
   $$('#winner [data-goto]').forEach((b) => b.onclick = () => showTab(b.dataset.goto));
   $('#ranking').innerHTML = r.ranked.length ? tableHtml(r) : '';
@@ -81,6 +103,15 @@ function renderRanking() {
     ? '<p class="hint mt-3">Cost isn’t recorded for this run, so the ranking uses accuracy and speed only.</p>' : '';
   renderShares(r.noCost);
   return r;
+}
+
+// How sure the winner is ahead of the runner-up on accuracy (the ranking also weighs cost and speed).
+function edgeNote([first, second]) {
+  if (!first || !second) return '';
+  const c = pairedCompare(perPrompt(first.id), perPrompt(second.id));
+  if (!c) return '';
+  const verdict = c.clear ? (c.diff > 0 ? 'clearly more accurate' : 'clearly less accurate') : 'no clear accuracy difference';
+  return `Vs. ${esc(second.label)}: ${verdict} (${points(c.diff)} points, 95% CI ${points(c.ci[0])} to ${points(c.ci[1])})`;
 }
 
 /** Show one results tab: overview (pass rate), ranking, questions or detail (the selected setup's answers). */
@@ -116,12 +147,13 @@ export function renderProgress() {
 function liveCell(id) {
   const p = pendingProgress(id)[0];
   if (!p) return null;
-  const passed = Object.values(p.done);
+  const done = Object.values(p.done);
+  const passed = done.filter((x) => x !== null);  // null: an infrastructure error, not scored
   const total = app.state.prompts.length;
   const bar = `<div class="mt-2 h-1 overflow-hidden rounded-full bg-surface-2" aria-hidden="true">
-    <div class="h-full rounded-full bg-accent transition-[width]" style="width:${(100 * passed.length) / Math.max(total, 1)}%"></div></div>`;
+    <div class="h-full rounded-full bg-accent transition-[width]" style="width:${(100 * done.length) / Math.max(total, 1)}%"></div></div>`;
   return {
-    answered: `${passed.length}/${total} answered${p.active.size ? ` · ${p.active.size} running` : ''}`,
+    answered: `${done.length}/${total} answered${p.active.size ? ` · ${p.active.size} running` : ''}`,
     soFar: passed.length ? `${pct(passed.filter(Boolean).length / passed.length)} passing so far` : '',
     bar,
   };
@@ -146,6 +178,31 @@ function renderMatrix() {
   $('#mlflowLink').classList.toggle('hidden', !state.mlflow?.matrix);
   if (state.mlflow?.matrix) $('#mlflowLink').href = state.mlflow.matrix;
   $$('#matrix [data-cell]').forEach((b) => b.onclick = () => { selectCell(b.dataset.cell); showTab('detail'); });
+  renderCompare(winner);
+}
+
+// Compare two setups prompt by prompt. The pickers are rebuilt only when the setups with results change, so live
+// progress doesn't reset a choice being made.
+function renderCompare(winner) {
+  const {state} = app;
+  const ids = state.cells.map((c) => c.id).filter((id) => aggregate(id));
+  $('#compareWrap').classList.toggle('hidden', ids.length < 2);
+  if (ids.length < 2) return;
+  const ranked = ranking().ranked.map((e) => e.id);
+  state.compare ??= [winner ?? ranked[0], ranked.find((id) => id !== (winner ?? ranked[0]))];
+  for (const [i, sel] of [$('#cmpA'), $('#cmpB')].entries()) {
+    const html = ids.map((id) => `<option value="${esc(id)}">${esc(cellLabel(id))}</option>`).join('');
+    if (sel.dataset.options !== html) { sel.innerHTML = html; sel.dataset.options = html; }
+    if (!ids.includes(state.compare[i])) state.compare[i] = ids[i];
+    sel.value = state.compare[i];
+    sel.onchange = () => { state.compare[i] = sel.value; renderCompare(winner); };
+  }
+  const [a, b] = state.compare;
+  const c = a === b ? null : pairedCompare(perPrompt(a), perPrompt(b));
+  $('#cmpResult').innerHTML = a === b ? '<span class="text-ink-muted">Pick two different setups.</span>' : !c ? '<span class="text-ink-muted">No prompt scored by both yet.</span>' : `
+    <p><span class="font-semibold">${c.clear ? (c.diff > 0 ? 'A is clearly more accurate.' : 'B is clearly more accurate.') : 'No clear difference in accuracy.'}</span>
+      <span class="tabular-nums">A minus B: ${points(c.diff)} points (95% CI ${points(c.ci[0])} to ${points(c.ci[1])}).</span></p>
+    <p class="mt-1 text-xs tabular-nums text-ink-muted">Over ${c.n} prompts both answered: A gets ${c.aOnly} right that B misses, B gets ${c.bOnly} right that A misses (by majority of repeats) · McNemar ${c.p < 0.001 ? 'p < 0.001' : `p = ${c.p.toFixed(3)}`}</p>`;
 }
 
 function renderCell(id, winner) {
@@ -156,6 +213,10 @@ function renderCell(id, winner) {
   const live = liveCell(id);
   if (!a) {
     if (err) return `<td class="align-top"><div class="rounded-control border border-danger/30 bg-danger-soft p-3 text-xs">${err}</div></td>`;
+    if (state.stopped) {
+      return `<td class="h-px align-top"><div class="flex h-full min-h-[92px] min-w-[104px] flex-col justify-center rounded-control border border-dashed border-border p-3 text-xs text-ink-muted"
+        title="Stopped before this setup finished a repeat"><span class="font-medium text-ink">Stopped</span>${live ? `<span class="mt-1 tabular-nums">${live.answered}</span>` : ''}</div></td>`;
+    }
     if (!live) {
       return `<td class="h-px align-top"><div class="flex h-full min-h-[92px] min-w-[104px] items-center rounded-control border border-dashed border-border p-3 text-xs text-ink-subtle"
         title="Waiting for an agent slot">Waiting</div></td>`;
@@ -171,16 +232,18 @@ function renderCell(id, winner) {
   const money = a.cost != null ? `<div class="whitespace-nowrap text-xs tabular-nums text-ink-muted" title="Average cost per prompt at list prices">${fmtUSD(a.cost)} / prompt</div>` : '';
   const runs = multi ? `<div class="mt-0.5 text-xs font-semibold tabular-nums" title="Share of prompts that passed in every repeat">${pct(a.pass_k)} always passed</div>` +
     (a.flaky.length ? `<div class="text-xs tabular-nums text-warning" title="Passed in some repeats, not all">${a.flaky.length} flaky</div>` : '') +
-    (a.n < state.repeats ? `<div class="flex items-center gap-1 text-[11px] text-ink-muted">${spinner}${a.n}/${state.repeats} repeats${live ? ` · ${live.answered}` : ''}</div>` : '') : '';
+    (a.n < state.repeats ? `<div class="flex items-center gap-1 text-[11px] text-ink-muted">${state.stopped ? 'Stopped at ' : spinner}${a.n}/${state.repeats} repeats${live && !state.stopped ? ` · ${live.answered}` : ''}</div>` : '') : '';
   const details = [multi && a.n > 1 ? `${pct(a.min)}–${pct(a.max)} across repeats (average shown)` : '',
     `${fmtS(a.seconds)} · ${Math.round(a.tokens).toLocaleString()} tokens · ${+a.tool_calls.toFixed(1)} tool calls`].filter(Boolean).join('\n');
   const first = reportsFor(id)[0];
   const counts = multi ? '' : ` <span class="text-xs font-normal text-ink-muted">${first.passed}/${first.total}</span>`;
+  const infra = a.infra ? `<div class="text-xs tabular-nums text-warning" title="Provider or compiler failures, retried and then left out of the scores">${a.infra} infra error${a.infra > 1 ? 's' : ''}</div>` : '';
   return `<td class="h-px align-top"><button type="button" data-cell="${esc(id)}" aria-pressed="${selected}"
     title="${esc(details)}" class="flex h-full w-full min-w-[104px] flex-col rounded-control border p-3 text-left transition-colors hover:border-border-strong ${selected ? 'border-accent ring-2 ring-accent/40' : 'border-border'}"
     style="background:${passTint(a.pass_rate)}">
     <div class="whitespace-nowrap text-2xl font-semibold leading-tight tracking-tight tabular-nums">${pct(a.pass_rate)}${counts}</div>
-    ${money}${runs}${err}
+    ${a.ci ? `<div class="whitespace-nowrap text-[11px] tabular-nums text-ink-muted" title="${CI_TITLE}">95% CI ${range(a.ci.rate)}</div>` : ''}
+    ${money}${runs}${infra}${err}
     ${id === winner ? '<div class="mt-auto pt-2"><span class="badge badge-pass" title="Best weighted score: see Ranking">Winner</span></div>' : ''}
   </button></td>`;
 }
@@ -195,11 +258,14 @@ function renderPerPrompt() {
     <td class="max-w-[280px]">${esc(p)}</td>
     ${cols.map(({id}) => {
       const pending = pendingProgress(id);
-      const cases = [...reportsFor(id).map((r) => r.cases[i]).filter(Boolean),
-        ...pending.filter((p) => i in p.done).map((p) => ({passed: p.done[i]}))];
+      const all = [...reportsFor(id).map((r) => r.cases[i]).filter(Boolean),
+        ...pending.filter((p) => i in p.done).map((p) => (p.done[i] === null ? {status: 'infra_error'} : {passed: p.done[i]}))];
+      const cases = all.filter(scored);
       const running = pending.some((p) => p.active.has(i));
       if (!cases.length) {
-        return running ? `<td class="text-center" title="Running">${spinner}</td>` : '<td class="text-center text-ink-subtle">·</td>';
+        if (running) return `<td class="text-center" title="Running">${spinner}</td>`;
+        return all.length ? '<td class="text-center font-semibold text-warning" title="Infrastructure error: not scored">!</td>'
+          : '<td class="text-center text-ink-subtle">·</td>';
       }
       if (state.repeats === 1) {
         return `<td class="text-center font-semibold ${cases[0].passed ? 'text-success' : 'text-danger'}" title="${cases[0].passed ? 'Passed' : 'Failed'}">${cases[0].passed ? '✓' : '✗'}</td>`;
@@ -235,13 +301,14 @@ function renderRunSummary(id, rs, activeRun) {
   <section class="panel mb-4 p-4">
     <h3 class="mb-2 text-sm font-medium text-ink-muted">Across ${a.n} of ${state.repeats} repeats</h3>
     <div class="mb-3 grid grid-cols-2 gap-2 md:grid-cols-5">
-      ${stat('Always passed', pct(a.pass_k))}
-      ${stat('Average pass rate', pct(a.pass_rate))}
+      ${stat('Always passed', `${pct(a.pass_k)}${a.ci ? `<span class="block text-xs font-normal text-ink-muted">95% CI ${range(a.ci.passK)}</span>` : ''}`)}
+      ${stat('Average pass rate', `${pct(a.pass_rate)}${a.ci ? `<span class="block text-xs font-normal text-ink-muted">95% CI ${range(a.ci.rate)}</span>` : ''}`, CI_TITLE)}
       ${stat('Range', `${pct(a.min)}–${pct(a.max)}`)}
       ${stat('Average time', fmtS(a.seconds))}
       ${stat('Average tokens', Math.round(a.tokens).toLocaleString())}
     </div>
     ${a.flaky.length ? `<p class="mb-3 rounded-control bg-warning-soft p-2 text-xs"><span class="font-semibold">Flaky prompts</span> (passed in some repeats, not all): ${a.flaky.map((i) => esc(state.prompts[i])).join(' · ')}</p>` : ''}
+    ${failureBreakdown(rs.flatMap((x) => x.cases)).replace('Why it failed (', 'Why it failed, all repeats (')}
     <div class="flex flex-wrap gap-2">${tabs}</div>
   </section>`;
 }
@@ -258,7 +325,8 @@ function renderReport(r) {
       </div>
     </div>
     <div class="mt-3 grid grid-cols-2 gap-2 md:grid-cols-4">
-      ${stat('Pass rate', `${pct(r.pass_rate)} <span class="text-sm font-normal text-ink-muted">(${r.passed}/${r.total})</span>`)}
+      ${stat('Pass rate', `${pct(r.pass_rate)} <span class="text-sm font-normal text-ink-muted">(${r.passed}/${r.total})</span>` +
+        (r.infra_errors ? `<span class="block text-xs font-normal text-warning">${r.infra_errors} infra error${r.infra_errors > 1 ? 's' : ''} not scored</span>` : ''))}
       ${r.cost_usd != null ? stat('Cost', `${fmtUSD(r.cost_usd)} <span class="text-sm font-normal text-ink-muted">(${fmtUSD(r.cost_usd / Math.max(r.total, 1))} / prompt)</span>`) : ''}
       ${stat('Time', fmtS(r.total_seconds))}
       ${stat('Tokens', (r.total_tokens ?? 0).toLocaleString())}
@@ -267,16 +335,50 @@ function renderReport(r) {
       <summary class="cursor-pointer select-none text-xs text-ink-muted hover:text-ink">More stats</summary>
       <div class="mt-2 grid grid-cols-2 gap-2 md:grid-cols-6">
         ${stat('Per prompt', fmtS(r.avg_case_seconds))}
+        ${caseStats(r)}
         ${r.cache_read_tokens ? stat('Input cached', pct(r.cache_read_tokens / Math.max(r.input_tokens, 1))) : ''}
         ${stat('Requests', r.requests)}
         ${stat('Tool calls', r.tool_calls)}
         ${r.reviews ? stat('Reviews', `${r.reviews} <span class="text-sm font-normal text-ink-muted">(${r.sent_back} sent back)</span>`) : ''}
         ${r.defined_metrics ? stat('Metrics defined', r.defined_metrics) : ''}
         ${r.lint_retries ? stat('Lint retries', r.lint_retries) : ''}
+        ${r.over_budget ? stat('Over budget', r.over_budget) : ''}
+        ${r.timeouts ? stat('Timed out', r.timeouts) : ''}
+        ${r.partial ? stat('Partial', r.partial) : ''}
       </div>
     </details>
+    ${failureBreakdown(r.cases)}
     <div class="grid gap-3 xl:grid-cols-2">${r.cases.map(renderCase).join('')}</div>
   </section>`;
+}
+
+// Why a setup's answers failed: label counts over the given cases, most common first, plus failures not labeled yet
+// (wrong rows wait for an LLM label: python -m app.labels <matrix id>).
+function failureBreakdown(cases) {
+  const failed = cases.filter((c) => c.status === 'fail');
+  if (!failed.length) return '';
+  const counts = {};
+  for (const c of failed) if (c.failure_label) counts[c.failure_label] = (counts[c.failure_label] ?? 0) + 1;
+  const names = app.config.failure_labels ?? {};
+  const rows = Object.entries(counts).sort((a, b) => b[1] - a[1])
+    .map(([k, n]) => `<li class="flex justify-between gap-4"><span>${esc(names[k] ?? k)}</span><span class="tabular-nums">${n}</span></li>`);
+  const open = failed.length - Object.values(counts).reduce((a, b) => a + b, 0);
+  return `<div class="mb-4 rounded-control border border-border p-3 text-sm">
+    <p class="mb-1.5 text-xs font-medium text-ink-muted">Why it failed (${failed.length} failed answer${failed.length > 1 ? 's' : ''})</p>
+    <ul class="space-y-0.5">${rows.join('')}</ul>
+    ${open ? `<p class="mt-1.5 text-xs text-ink-subtle" title="Wrong rows need reading to label">${open} wrong-rows answer${open > 1 ? 's' : ''} not labeled yet: <code>uv run python -m app.labels ${esc(app.state.matrixId ?? '<matrix id>')}</code></p>` : ''}
+  </div>`;
+}
+
+// Spread across one repeat's answered prompts: time and tool calls at the median and 95th percentile, and cost per
+// correct answer (the run's whole cost over its passes).
+function caseStats(r) {
+  const answered = r.cases.filter((c) => c.seconds != null);
+  if (!answered.length) return '';
+  const q = (key, p) => quantile(answered.map((c) => c[key] ?? 0), p);
+  return stat('Time p50 / p95', `${fmtS(q('seconds', 0.5))} / ${fmtS(q('seconds', 0.95))}`, 'Agent time per prompt, excluding waiting for a slot') +
+    stat('Tool calls p50 / p95', `${+q('tool_calls', 0.5).toFixed(1)} / ${+q('tool_calls', 0.95).toFixed(1)}`) +
+    (r.cost_usd != null ? stat('Cost per correct', r.passed ? fmtUSD(r.cost_usd / r.passed) : '—', 'Total cost of this repeat ÷ prompts passed') : '');
 }
 
 const queryLabel = (text) => `<p class="mt-2.5 text-xs font-medium text-ink-muted">${text}</p>`;
@@ -298,12 +400,13 @@ function renderCase(c) {
     ? `${fmtS(c.seconds)} · ${((c.input_tokens || 0) + (c.output_tokens || 0)).toLocaleString()} tokens · ${plural(c.requests ?? 0, 'request')} · ${plural(c.tool_calls ?? 0, 'tool call')}` +
       (c.reviews ? ` · ${c.reviews} review${c.reviews > 1 ? 's' : ''}${c.sent_back ? `, ${c.sent_back} sent back` : ''}` : '') +
       (c.defined_metrics ? ` · ${c.defined_metrics} metric${c.defined_metrics > 1 ? 's' : ''} defined` : '') +
-      (c.lints?.length ? ` · lint: ${esc(c.lints.join('; '))}` : '')
+      (c.lints?.length ? ` · lint: ${esc(c.lints.join('; '))}` : '') +
+      (c.attempts > 1 ? ` · ${c.attempts} attempts` : '')
     : '';
   return `
-  <article class="min-w-0 rounded-control border p-3 ${c.passed ? 'border-success/30' : 'border-danger/30'}">
+  <article class="min-w-0 rounded-control border p-3 ${c.status === 'infra_error' ? 'border-warning/30' : c.passed ? 'border-success/30' : 'border-danger/30'}">
     <div class="flex items-start gap-2">
-      ${passBadge(c.passed)}
+      ${passBadge(c.passed, c.status)}
       <div class="min-w-0 flex-1">
         <p class="text-sm font-medium">${esc(c.prompt)}</p>
       </div>
@@ -311,6 +414,7 @@ function renderCase(c) {
     </div>
     ${c.error ? `<p class="mt-2 break-words rounded-control bg-danger-soft p-2 font-mono text-xs">${esc(c.error)}</p>` : ''}
     ${c.reason && !c.error ? `<p class="mt-2 text-xs text-ink-muted">${esc(c.reason)}</p>` : ''}
+    ${c.failure_label ? `<p class="mt-2 text-xs"><span class="badge badge-neutral" title="${c.label_source === 'llm' ? 'Labeled by an LLM' : 'Labeled by a rule'}">${esc(app.config.failure_labels?.[c.failure_label] ?? c.failure_label)}</span>${c.label_rationale ? ` <span class="text-ink-muted">${esc(c.label_rationale)}</span>` : ''}</p>` : ''}
     ${c.sql || meta ? `<details class="mt-2"><summary class="cursor-pointer select-none text-xs text-ink-muted hover:text-ink">Details</summary>
       ${meta ? `<p class="mt-1.5 text-xs tabular-nums text-ink-subtle">${meta}</p>` : ''}${c.sql ? renderQuery(c) : ''}</details>` : ''}
   </article>`;

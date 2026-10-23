@@ -12,8 +12,8 @@ export async function getJSON(url, params = {}) {
   return res.json();
 }
 
-export async function postJSON(url, body) {
-  const res = await fetch(url, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});
+export async function postJSON(url, body, {signal} = {}) {
+  const res = await fetch(url, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body), signal});
   if (!res.ok) throw await failure(res);
   return res;
 }

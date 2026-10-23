@@ -1,7 +1,7 @@
 [project]
-name = "semantic-layer-bench"
+name = "semantic-layer-harness-bench"
 version = "0.1.0"
-description = "Benchmark AI agents answering business questions over raw SQL, Malloy and dbt MetricFlow"
+description = "Benchmark how model, data interface (raw SQL, glossary, dbt MetricFlow, Malloy) and harness drive an analytics agent's accuracy"
 requires-python = ">=3.11"
 dependencies = [
     "fastapi",
@@ -17,3 +17,12 @@ dependencies = [
 
 [tool.uv]
 package = false
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
