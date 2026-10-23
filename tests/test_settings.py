@@ -53,4 +53,4 @@ def test_cost_uses_saved_prices():
     cheap = ModelEntry(id='claude-haiku-5-5', name='Haiku', prices=Prices(input=1, output=1, cache_read=1, cache_write=1))
     settings.save(DEFAULTS.model_copy(update={'models': [cheap]}))
     assert pricing.case_cost(case, 'claude-haiku-5-5') == pytest.approx(1.0)
-    assert pricing.case_cost(case, 'claude-opus-5-5') == 0.0  # no longer listed: cost not tracked
+    assert pricing.case_cost(case, 'claude-opus-5-5') is None  # no longer listed: cost not tracked

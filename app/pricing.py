@@ -3,10 +3,12 @@
 from . import settings
 
 
-def case_cost(case: dict, model: str) -> float:
-    """List-price USD cost of one case's token usage."""
+def case_cost(case: dict, model: str) -> float | None:
+    """List-price USD cost of one case's token usage; None when the model has no prices (cost not tracked)."""
     p = settings.prices(model)
-    if p is None or case.get('input_tokens') is None:
+    if p is None:
+        return None
+    if case.get('input_tokens') is None:
         return 0.0
     read, write = case.get('cache_read_tokens') or 0, case.get('cache_write_tokens') or 0
     fresh = max(0, case['input_tokens'] - read - write)  # input_tokens includes cached tokens
