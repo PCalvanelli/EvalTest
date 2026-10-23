@@ -6,7 +6,7 @@
 
 ## How it works
 
-Each eval is a matrix. Every cell answers the same questions over the same DuckDB warehouse. Results stream in live and are recorded in MLflow.
+Each eval is a matrix. Every cell answers the same questions over the same DuckDB warehouse. Within a repeat, every cell's questions run concurrently, six agents at a time across the matrix; repeats run one after another. Results stream in per question and are recorded in MLflow.
 
 | Axis | Options |
 |---|---|

@@ -4,7 +4,7 @@
 import {$, $$, esc} from './ui.js';
 import {app, freshState, MODELS} from './config.js';
 import {postJSON, readNdjson} from './api.js';
-import {renderAll, renderRunTimes, selectCell} from './results.js';
+import {renderAll, renderProgress, renderRunTimes, selectCell} from './results.js';
 
 const check = '<svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 6.5l2.5 2.5 4.5-5"/></svg>';
 
@@ -95,10 +95,13 @@ async function submit(e) {
   const elapsed = () => ((performance.now() - t0) / 1000).toFixed(1) + 's';
   const progress = () => {
     const state = live;
-    const done = Object.values(state.runs).reduce((n, r) => n + Object.keys(r).length, 0) + Object.keys(state.errors).length;
+    const cells = Object.values(state.progress).flatMap((r) => Object.values(r));
+    const answered = cells.reduce((n, p) => n + Object.keys(p.done).length, 0);
+    const running = cells.reduce((n, p) => n + p.active.size, 0);
+    const total = state.cells.length * state.prompts.length * state.repeats;
     const current = Math.min(Object.keys(state.runSeconds).length + 1, state.repeats);
     const run = state.repeats > 1 ? `Repeat ${current}/${state.repeats} · ` : '';
-    showStatus(`Running… ${run}${done}/${(state.cells.length * state.repeats) || '?'} setups done · ${elapsed()}`);
+    showStatus(`Running… ${run}${answered}/${total || '?'} answers · ${running} running · ${elapsed()}`);
   };
   const timer = setInterval(progress, 200);
   try {
@@ -118,8 +121,23 @@ async function submit(e) {
   }
 }
 
+// Question events can arrive dozens a second: batch their re-render into one per frame.
+let progressFrame = null;
+function scheduleProgress(state) {
+  progressFrame ??= requestAnimationFrame(() => {
+    progressFrame = null;
+    if (app.state === state) renderProgress();
+  });
+}
+
 function handleEvent(ev) {
   const state = live;
+  if (ev.type === 'case_start' || ev.type === 'case') {
+    const p = ((state.progress[ev.run] ??= {})[ev.id] ??= {active: new Set(), done: {}});
+    if (ev.type === 'case_start') p.active.add(ev.case);
+    else { p.active.delete(ev.case); p.done[ev.case] = ev.passed; }
+    return scheduleProgress(state);
+  }
   if (ev.type === 'plan') Object.assign(state, {cells: ev.cells, repeats: ev.repeats, mlflow: ev.mlflow, prompts: ev.prompts});
   else if (ev.type === 'run_end') state.runSeconds[ev.run] = ev.seconds;
   else if (ev.type === 'cell') (state.runs[ev.run] ??= {})[ev.report.id] = ev.report;
