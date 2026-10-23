@@ -17,6 +17,7 @@ from pydantic import BaseModel, Field
 from . import gold, harness_view, history, mlflow_ui, tracking
 from .agent import CONTEXTS, Context
 from .evals import BENCHMARK_VERSION, matrix_cells, run_matrix
+from .labels import LABELS
 from .questions import QUESTION_SETS
 
 STATIC = Path(__file__).resolve().parent.parent / 'static'
@@ -52,6 +53,7 @@ def config() -> dict:
     return {
         'contexts': CONTEXTS,
         'benchmark_version': BENCHMARK_VERSION,
+        'failure_labels': LABELS,
         'question_sets': {name: len(qs) for name, qs in QUESTION_SETS.items()},
         'api_key_set': bool(os.environ.get('ANTHROPIC_API_KEY')),
         'mlflow_url': tracking.UI_URL if tracking.ENABLED else None,

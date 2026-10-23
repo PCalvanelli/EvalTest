@@ -308,6 +308,7 @@ function renderRunSummary(id, rs, activeRun) {
       ${stat('Average tokens', Math.round(a.tokens).toLocaleString())}
     </div>
     ${a.flaky.length ? `<p class="mb-3 rounded-control bg-warning-soft p-2 text-xs"><span class="font-semibold">Flaky prompts</span> (passed in some repeats, not all): ${a.flaky.map((i) => esc(state.prompts[i])).join(' · ')}</p>` : ''}
+    ${failureBreakdown(rs.flatMap((x) => x.cases)).replace('Why it failed (', 'Why it failed, all repeats (')}
     <div class="flex flex-wrap gap-2">${tabs}</div>
   </section>`;
 }
@@ -346,8 +347,27 @@ function renderReport(r) {
         ${r.partial ? stat('Partial', r.partial) : ''}
       </div>
     </details>
+    ${failureBreakdown(r.cases)}
     <div class="grid gap-3 xl:grid-cols-2">${r.cases.map(renderCase).join('')}</div>
   </section>`;
+}
+
+// Why a setup's answers failed: label counts over the given cases, most common first, plus failures not labeled yet
+// (wrong rows wait for an LLM label: python -m app.labels <matrix id>).
+function failureBreakdown(cases) {
+  const failed = cases.filter((c) => c.status === 'fail');
+  if (!failed.length) return '';
+  const counts = {};
+  for (const c of failed) if (c.failure_label) counts[c.failure_label] = (counts[c.failure_label] ?? 0) + 1;
+  const names = app.config.failure_labels ?? {};
+  const rows = Object.entries(counts).sort((a, b) => b[1] - a[1])
+    .map(([k, n]) => `<li class="flex justify-between gap-4"><span>${esc(names[k] ?? k)}</span><span class="tabular-nums">${n}</span></li>`);
+  const open = failed.length - Object.values(counts).reduce((a, b) => a + b, 0);
+  return `<div class="mb-4 rounded-control border border-border p-3 text-sm">
+    <p class="mb-1.5 text-xs font-medium text-ink-muted">Why it failed (${failed.length} failed answer${failed.length > 1 ? 's' : ''})</p>
+    <ul class="space-y-0.5">${rows.join('')}</ul>
+    ${open ? `<p class="mt-1.5 text-xs text-ink-subtle" title="Wrong rows need reading to label">${open} wrong-rows answer${open > 1 ? 's' : ''} not labeled yet: <code>uv run python -m app.labels ${esc(app.state.matrixId ?? '<matrix id>')}</code></p>` : ''}
+  </div>`;
 }
 
 // Spread across one repeat's answered prompts: time and tool calls at the median and 95th percentile, and cost per
@@ -394,6 +414,7 @@ function renderCase(c) {
     </div>
     ${c.error ? `<p class="mt-2 break-words rounded-control bg-danger-soft p-2 font-mono text-xs">${esc(c.error)}</p>` : ''}
     ${c.reason && !c.error ? `<p class="mt-2 text-xs text-ink-muted">${esc(c.reason)}</p>` : ''}
+    ${c.failure_label ? `<p class="mt-2 text-xs"><span class="badge badge-neutral" title="${c.label_source === 'llm' ? 'Labeled by an LLM' : 'Labeled by a rule'}">${esc(app.config.failure_labels?.[c.failure_label] ?? c.failure_label)}</span>${c.label_rationale ? ` <span class="text-ink-muted">${esc(c.label_rationale)}</span>` : ''}</p>` : ''}
     ${c.sql || meta ? `<details class="mt-2"><summary class="cursor-pointer select-none text-xs text-ink-muted hover:text-ink">Details</summary>
       ${meta ? `<p class="mt-1.5 text-xs tabular-nums text-ink-subtle">${meta}</p>` : ''}${c.sql ? renderQuery(c) : ''}</details>` : ''}
   </article>`;

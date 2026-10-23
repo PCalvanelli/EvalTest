@@ -70,6 +70,7 @@ Both semantic layers can express every prompt (`uv run python -m app.expressibil
 | pass^k | Share of prompts passed in *every* run. Use Runs ≥ 3: one prompt moves the score 4.5 points |
 | Cost | The agent's tokens (reviewer included) at list prices (`app/pricing.py`), per prompt |
 | Budget | Every setup gets the same caps per prompt: 15 tool calls, 250k tokens (agent and reviewer together) and 180 s. A case over a cap fails as *over budget* or *timed out* |
+| Failure label | Why each failed answer failed. Rules label budget, never-ran, made-up names, extra columns and ambiguous references at grading time; `app.labels` has an LLM (Haiku) label wrong rows: join path, fan-out, metric definition, filter/time/grain. Labels never change pass/fail |
 | Infra error | A provider outage (rate limit, overload, 5xx, connection) or a Malloy compiler crash. Retried twice, then left out of pass rate and pass^k, and counted separately |
 
 **Prompt sets:** `app/questions.py`. Each prompt has a stable id (`b01`, `h01`), a difficulty and tags. The held-out set (10 prompts) was written before tuning, so don't tune against it.
@@ -95,6 +96,7 @@ uv run uvicorn app.main:app --reload --reload-dir app --reload-dir static
 | Rebuild the warehouse | `uv run python -m app.db` (it also rebuilds itself when its SQL changes) |
 | Freeze reference results (after changing prompts or the warehouse) | `uv run python -m app.gold freeze` |
 | Check the frozen results still match the reference SQL | `uv run python -m app.gold verify` |
+| Label why a past matrix's wrong-rows answers failed (LLM, about $0.01 per answer) | `uv run python -m app.labels <matrix id>` (`--relabel` redoes them) |
 | Run the tests | `uv run pytest` and `node --test tests/*.test.mjs` |
 | Use an MLflow server | `MLFLOW_TRACKING_URI` (default: `data/mlflow.db`) |
 | Turn off tracking | `EVAL_MLFLOW=off` |
@@ -116,6 +118,7 @@ uv run uvicorn app.main:app --reload --reload-dir app --reload-dir static
 | `app/agent.py` | Agents and harness |
 | `app/questions.py`, `app/gold.py`, `gold/` | Prompt sets, reference SQL and frozen reference results |
 | `app/evals.py` | Running and grading a prompt set, and running a matrix (UI and CLI) |
+| `app/labels.py` | Failure labels: rules, and the LLM labeler |
 | `app/tracking.py`, `app/history.py` | MLflow recording and read API |
 | `app/main.py` | FastAPI server |
 | `static/` | UI (ES modules, no build). Design tokens in `static/css/tokens.css` |

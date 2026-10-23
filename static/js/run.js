@@ -156,7 +156,7 @@ function handleEvent(ev) {
     else { p.active.delete(ev.case); p.done[ev.case] = ev.status === 'infra_error' ? null : ev.passed; }  // null: not scored
     return scheduleProgress(state);
   }
-  if (ev.type === 'plan') Object.assign(state, {cells: ev.cells, repeats: ev.repeats, mlflow: ev.mlflow, prompts: ev.prompts});
+  if (ev.type === 'plan') Object.assign(state, {cells: ev.cells, repeats: ev.repeats, mlflow: ev.mlflow, prompts: ev.prompts, matrixId: ev.matrix_id});
   else if (ev.type === 'run_end') state.runSeconds[ev.run] = ev.seconds;
   else if (ev.type === 'cell') (state.runs[ev.run] ??= {})[ev.report.id] = ev.report;
   else if (ev.type === 'cell_error') state.errors[ev.id] = `Repeat ${ev.run}: ${ev.error}`;

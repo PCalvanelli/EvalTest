@@ -198,6 +198,9 @@ class MatrixTracker:
             if c.get('trace_id') and c.get('status') != 'infra_error':
                 mlflow.log_feedback(trace_id=c['trace_id'], name='passed', value=c['passed'], rationale=c['reason'],
                                     source=AssessmentSource('CODE', 'results_match'))
+                if c.get('failure_label'):  # a rule's label; LLM labels are logged by app.labels
+                    mlflow.log_feedback(trace_id=c['trace_id'], name='failure_label', value=c['failure_label'],
+                                        source=AssessmentSource('CODE', 'app.labels rules'))
 
     def log_run_time(self, run_no: int, seconds: float) -> None:
         """Wall-clock seconds for one run of the whole matrix, on the parent run at step = run number."""

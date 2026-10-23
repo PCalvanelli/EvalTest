@@ -105,7 +105,7 @@ function pages() {
           [code('repeat'), 'Repeats'],
           ['Experiment / report', 'One setup’s repeat / its report in History'],
         ])}
-        ${p('We don’t use it today: it would replace only the grading step. Our runner also runs the setup grid on one shared concurrency limit, streams progress live, enforces equal budgets and leaves out infra errors, and MLflow already holds the results. We may use it, or MLflow’s own judges, for LLM-judged failure labels later.')}`},
+        ${p(`We don’t use it today: it would replace only the grading step. Our runner also runs the setup grid on one shared concurrency limit, streams progress live, enforces equal budgets and leaves out infra errors, and MLflow already holds the results. LLM-judged failure labels don’t need it either: they are one Pydantic AI call with a typed answer (${code('app/labels.py')}), logged to MLflow beside pass/fail.`)}`},
       {id: 'scoring', title: 'Scoring', body: `
         ${table(['Measure', 'What it means'], [
           ['Pass', 'The final query runs and its rows match the question’s frozen reference rows (order-insensitive, numbers within 0.5%).'],
@@ -116,6 +116,7 @@ function pages() {
           ['Flaky', 'Prompts passed in some repeats but not all.'],
           ['95% CI', 'The likely range of a pass rate on another set of similar prompts: a bootstrap over prompts. With 22 prompts it spans about ±18 points, so read small gaps with care.'],
           ['Compare', 'Two setups, prompt by prompt (Pass rate tab). Shows the difference with its 95% interval, how many prompts only one gets right, and a McNemar test. A difference is <em>clear</em> when its interval leaves out zero. The winner line says whether the winner is clearly more accurate than the runner-up.'],
+          ['Failure label', `Why each failed answer failed. Rules label budget, never-ran, made-up names, extra columns and ambiguous references as answers are graded. Wrong rows get an LLM label (join path, fan-out, metric definition, filter/time/grain) from ${code('python -m app.labels <matrix id>')}. Labels never change pass/fail.`],
           ['Spread', 'Per repeat: agent time and tool calls at the median and 95th percentile, and cost per correct answer.'],
           ['Cost', 'The agent’s tokens, reviewer included, at list prices, per prompt.'],
         ])}
@@ -168,6 +169,7 @@ function pages() {
           ['Run matrices without the UI (each repeat shuffles the prompt order; add --seed to fix it)', code('uv run python -m app.bench --harness on off --runs 3')],
           ['Freeze reference results after changing prompts or the warehouse', code('uv run python -m app.gold freeze')],
           ['Check the frozen results still match the reference SQL', code('uv run python -m app.gold verify')],
+          ['Label why a past matrix’s wrong-rows answers failed (LLM)', code('uv run python -m app.labels <matrix id>')],
           ['Run the tests', `${code('uv run pytest')} and ${code('node --test tests/*.test.mjs')}`],
           ['Check every prompt is expressible in both semantic layers, and that the glossary defines every governed metric', code('uv run python -m app.expressibility')],
           ['Rebuild the warehouse', code('uv run python -m app.db')],

@@ -16,6 +16,7 @@ from pydantic_ai.exceptions import (ModelConnectionError, ModelQuotaExceededErro
 from pydantic_ai.usage import RunUsage, UsageLimits
 
 from . import db, gold, tracking
+from .labels import count_labels, rule_label
 from .agent import Context, HarnessLog, MalloyAnswer, MetricFlowAnswer, answer_sql, build_agent
 from .malloy_bridge import SidecarError
 from .pricing import case_cost
@@ -167,6 +168,8 @@ async def run_eval(
                 outcome, reason = await asyncio.to_thread(grade, output['sql'], output['error'], question)
                 passed = outcome == 'pass'
                 output['status'], output['partial'] = 'pass' if passed else 'fail', outcome == 'partial'
+                output['failure_label'] = rule_label({**output, 'name': name})  # the LLM labels the rest later
+                output['label_source'] = 'rule' if output['failure_label'] else None
             emit({'type': 'case', 'case': i, 'passed': passed, 'status': output['status'], 'seconds': output['seconds']})
         return {'name': name, 'prompt': question['text'], 'expected_sql': question['expected_sql'], **output,
                 'passed': passed, 'reason': reason, 'cost_usd': case_cost(output, model),
@@ -196,6 +199,7 @@ async def run_eval(
         'over_budget': sum(c.get('failure') == 'budget' for c in cases),
         'timeouts': sum(c.get('failure') == 'timeout' for c in cases),
         'partial': sum(bool(c.get('partial')) for c in cases),
+        'failure_labels': count_labels(cases),
         'total_tokens': total('input_tokens') + total('output_tokens'),
         'input_tokens': total('input_tokens'),
         'cache_read_tokens': total('cache_read_tokens'),
@@ -251,7 +255,7 @@ async def run_matrix(cells: list[dict], questions: Sequence[dict], repeats: int,
         return {'type': 'cell', 'run': run_no, 'report': {**report, 'id': cell['id'], 'run': run_no}}
 
     yield {'type': 'plan', 'cells': cells, 'prompts': [q['text'] for q in questions], 'repeats': repeats,
-           'mlflow': tracker.urls() if tracker else None}
+           'mlflow': tracker.urls() if tracker else None, 'matrix_id': tracker.parent_id if tracker else None}
     status = 'KILLED'  # stays KILLED if the matrix is interrupted, so History doesn't show it running forever
     tasks: list[asyncio.Task] = []
     try:

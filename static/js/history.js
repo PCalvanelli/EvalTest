@@ -180,6 +180,7 @@ function toState(m) {
     errors: m.errors,
     runSeconds: m.run_seconds ?? {},
     totalSeconds: m.seconds,
+    matrixId: m.id,
     mlflow: {matrix: m.mlflow_url,
              cells: Object.fromEntries(m.cells.map((c) => [c.id, c.mlflow_url]).filter(([, u]) => u))},
   });
