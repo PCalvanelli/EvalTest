@@ -83,7 +83,7 @@ uv run uvicorn app.main:app --reload --reload-dir app --reload-dir static
 | Task | Command or setting |
 |---|---|
 | Benchmark from the command line | `uv run python -m app.bench --harness on off --runs 3` (each run shuffles the prompt order; `--seed` fixes it, and the seed is recorded) |
-| Check every prompt is expressible, and that MetricFlow and Malloy agree on every metric | `uv run python -m app.expressibility` |
+| Check every prompt is expressible, that MetricFlow and Malloy agree on every metric, and that the glossary defines every governed metric | `uv run python -m app.expressibility` |
 | Rebuild the warehouse | `uv run python -m app.db` (it also rebuilds itself when its SQL changes) |
 | Freeze reference results (after changing prompts or the warehouse) | `uv run python -m app.gold freeze` |
 | Check the frozen results still match the reference SQL | `uv run python -m app.gold verify` |

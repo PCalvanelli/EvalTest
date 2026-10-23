@@ -168,7 +168,7 @@ function pages() {
           ['Freeze reference results after changing prompts or the warehouse', code('uv run python -m app.gold freeze')],
           ['Check the frozen results still match the reference SQL', code('uv run python -m app.gold verify')],
           ['Run the tests', `${code('uv run pytest')} and ${code('node --test tests/*.test.mjs')}`],
-          ['Check every prompt is expressible in both semantic layers', code('uv run python -m app.expressibility')],
+          ['Check every prompt is expressible in both semantic layers, and that the glossary defines every governed metric', code('uv run python -m app.expressibility')],
           ['Rebuild the warehouse', code('uv run python -m app.db')],
         ])}
         ${p('Command-line runs are recorded in MLflow like the UI’s, so they show up in History.')}`},

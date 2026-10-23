@@ -1,7 +1,8 @@
 """Can each benchmark question be answered in dbt MetricFlow and in Malloy at all? A hand-written reference answer per
 question and target, graded with the eval's own result matcher against the expected SQL. This is the ceiling an agent
 can reach with each semantic layer (and its harness tools). It also checks that the two layers agree on every governed
-metric. It costs no API calls.
+metric, and that the business glossary (the glossary target's definitions) covers every governed metric. It costs no
+API calls.
 
     uv run python -m app.expressibility
 """
@@ -9,6 +10,10 @@ metric. It costs no API calls.
 from __future__ import annotations
 
 import asyncio
+import re
+from pathlib import Path
+
+import yaml
 
 from . import db, malloy_bridge, metricflow_bridge
 from .metricflow_bridge import MetricDefinition as D, MetricFlowQueryWithSteps as Q, MetricInput as I, PostStep as P
@@ -191,6 +196,30 @@ PARITY: dict[str, tuple[Q, str]] = {
 }
 
 
+METRICS_YML = Path(__file__).resolve().parent.parent / 'dbt' / 'models' / 'metrics.yml'
+GLOSSARY = Path(__file__).resolve().parent / 'glossary.md'
+# Glossary term for a metric whose label it words differently.
+GLOSSARY_ALIASES = {
+    'churned_subscriptions': 'churned subscriptions',
+    'avg_first_reply_hours': 'first response time',
+    'avg_resolution_hours': 'resolution time',
+    'units_available': 'units available to sell',
+}
+# Plain counts whose meaning the name already says: the glossary need not define them.
+SELF_EVIDENT = {'customer_count', 'product_order_count', 'ticket_count', 'clicks', 'impressions', 'units_reserved'}
+
+
+def glossary_gaps() -> list[str]:
+    """Governed metrics the glossary neither defines nor exempts (SELF_EVIDENT), so the glossary target would lack a
+    definition the semantic layers have. A glossary term is a **bold** name; '(...)' asides and '/' alternatives
+    are separate spellings of it."""
+    terms = {t.strip().lower() for bold in re.findall(r'\*\*(.+?)\*\*', GLOSSARY.read_text())
+             for t in re.sub(r'\s*\(.*?\)', '', bold).split('/')}
+    metrics = yaml.safe_load(METRICS_YML.read_text())['metrics']
+    return [m['name'] for m in metrics if m['name'] not in SELF_EVIDENT
+            and GLOSSARY_ALIASES.get(m['name'], m['label']).lower() not in terms]
+
+
 async def main() -> None:
     totals: dict[str, list[int]] = {}
     for set_name, prompts in QUESTION_SETS.items():
@@ -224,11 +253,14 @@ async def main() -> None:
             ok = False
         agree += ok
         print(f'  {"agree" if ok else "DIFFER"}  {name}')
+    gaps = glossary_gaps()
+    print('\nglossary coverage')
+    print(f'  {"MISSING " + ", ".join(gaps) if gaps else "every governed metric is defined or self-evident"}')
     print()
     for k, (ok, n) in totals.items():
         print(f'{k:<22} {ok}/{n} expressible ({ok / n:.0%})')
     print(f'{"parity":<22} {agree}/{len(PARITY)} agree')
-    raise SystemExit(0 if agree == len(PARITY) and all(ok == n for ok, n in totals.values()) else 1)
+    raise SystemExit(0 if agree == len(PARITY) and all(ok == n for ok, n in totals.values()) and not gaps else 1)
 
 
 if __name__ == '__main__':
