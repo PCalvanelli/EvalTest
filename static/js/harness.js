@@ -6,6 +6,7 @@ import {getJSON} from './api.js';
 import {go} from './router.js';
 import {contextIds, contextName} from './config.js';
 import {targetIcon, withIcon} from './icons.js';
+import {ORDER} from './targets.js';
 
 const cache = new Map();
 const fetchAgent = (target, mode) => {
@@ -15,10 +16,11 @@ const fetchAgent = (target, mode) => {
 };
 
 export async function showHarness(params) {
-  const target = contextIds().includes(params.target) ? params.target : contextIds()[0];
+  const ids = ORDER.filter((t) => contextIds().includes(t));
+  const target = ids.includes(params.target) ? params.target : ids[0];
   $('#harnessControls').innerHTML = `
     <div class="flex gap-5 border-b border-border" role="tablist" aria-label="Target">
-      ${contextIds().map((t) => `<button type="button" role="tab" data-target="${t}" aria-selected="${t === target}"
+      ${ids.map((t) => `<button type="button" role="tab" data-target="${t}" aria-selected="${t === target}"
         class="-mb-px border-b-2 px-0.5 pb-2 text-sm ${t === target ? 'border-ink font-medium text-ink' : 'border-transparent text-ink-muted hover:text-ink'}">${withIcon(targetIcon(t), esc(contextName(t)))}</button>`).join('')}
     </div>`;
   $$('[data-target]').forEach((b) => b.onclick = () => go(`#/harness?target=${b.dataset.target}`));

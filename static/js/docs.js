@@ -37,7 +37,7 @@ function pages() {
         ${table(['Tab', 'Use it to'], [
           ['<a class="link" href="#/run">Run</a>', 'Pick setups and repeats; results stream in.'],
           ['<a class="link" href="#/history">History</a>', 'Reopen a past run, or run it again with the same settings.'],
-          ['<a class="link" href="#/harness">Harness</a>', 'See exactly what the agent is given, baseline vs. harness, for each target.'],
+          ['<a class="link" href="#/harness">Harness</a>', 'Compare the four targets, by design and by measured task type, and see what the harness adds to each.'],
           ['<a class="link" href="#/settings">Settings</a>', 'Models and prices, concurrency and the failure labeler.'],
           ['MLflow', 'Inspect traces: every model call and tool call for each prompt.'],
         ])}
@@ -135,6 +135,7 @@ function pages() {
           [code('GET /api/matrices'), `Past runs, newest first, with summary metrics. Paged with ${code('limit')} and ${code('offset')}.`],
           [code('GET /api/matrices/{id}'), 'One past run in full: setups, prompts, every report and answer, errors and timings.'],
           [code('GET /api/harness/{target}'), `What one target’s agent sees: instructions, tools and checks. ${code('?mode=on')} for the harness, ${code('off')} for the baseline. Calls no model.`],
+          [code('GET /api/targets/measured'), `Pass rates per target, overall and per question tag, pooled from this benchmark version’s runs. ${code('?model=')} and ${code('?harness=')} pick the slice.`],
           [`${code('GET')} ${code('PUT')} ${code('DELETE /api/settings')}`, 'Read, save or reset the local settings.'],
           [code('/mlflow/'), 'MLflow’s own UI over the same store, for traces.'],
         ])}
