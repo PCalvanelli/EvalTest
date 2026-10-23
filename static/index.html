@@ -4,10 +4,6 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Semantic Layer Bench</title>
-  <script>
-    // Apply a pinned theme before first paint (no flash). Unset = follow the OS.
-    try { const t = localStorage.getItem('theme'); if (t) document.documentElement.dataset.theme = t; } catch {}
-  </script>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
@@ -41,7 +37,6 @@
       .panel { @apply bg-surface border border-border rounded-panel; }
       .panel-title { @apply text-[15px] font-semibold text-ink; }
       .hint { @apply text-xs leading-relaxed text-ink-muted; }
-      .field-label { @apply block text-[13px] font-medium text-ink; }
       .group-label { @apply mb-1.5 text-[13px] font-medium text-ink-muted; }
       .input { @apply mt-1 w-full rounded-control border border-border bg-surface px-3 py-2 text-sm text-ink placeholder:text-ink-subtle focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/30; }
       .btn { @apply inline-flex items-center justify-center gap-1.5 rounded-control px-3 py-1.5 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50; }
@@ -56,11 +51,6 @@
       .badge-neutral { @apply bg-surface-2 text-ink-muted; }
       .tab { @apply rounded-control px-3 py-1.5 text-sm text-ink-muted hover:text-ink; }
       .tab[aria-current="page"] { @apply bg-surface-2 font-medium text-ink; }
-      .subtab { @apply -mb-px shrink-0 whitespace-nowrap border-b-2 border-transparent px-0.5 pb-2.5 pt-1 text-sm text-ink-muted hover:text-ink; }
-      .subtab[aria-selected="true"] { @apply border-accent font-medium text-ink; }
-      .refbtn { @apply shrink-0 whitespace-nowrap rounded-control px-3 py-1.5 text-left text-sm text-ink-muted hover:bg-surface-2 hover:text-ink; }
-      .tip { @apply fixed z-40 w-80 max-w-[calc(100vw-32px)] rounded-panel border border-border-strong bg-surface p-3 text-[13px] leading-relaxed text-ink shadow-lg; }
-      .refbtn[aria-pressed="true"] { @apply bg-surface font-medium text-ink shadow-[inset_0_0_0_1px_rgb(var(--border))]; }
       .stat { @apply rounded-control bg-surface-2 px-3 py-2; }
       .stat-label { @apply text-xs text-ink-muted; }
       .stat-value { @apply text-lg font-semibold tabular-nums text-ink; }
@@ -86,195 +76,60 @@
     <nav class="flex flex-wrap items-center gap-1" aria-label="Views">
       <a class="tab" href="#/run" data-tab="run">Run</a>
       <a class="tab" href="#/history" data-tab="history">History</a>
-      <a class="tab" href="#/traces" data-tab="traces">Traces</a>
-      <a class="tab" href="#/labels" data-tab="labels">Labels</a>
       <a class="tab" href="#/harness" data-tab="harness">Harness</a>
     </nav>
-    <div class="ml-auto flex items-center gap-2">
-      <a id="mlflowNav" href="/mlflow/" target="_blank" rel="noopener" class="btn btn-quiet hidden"
-         title="MLflow's own UI, served from the same store">MLflow ↗</a>
-      <button id="themeToggle" type="button" class="btn btn-quiet" aria-label="Color theme"></button>
-    </div>
+    <a id="mlflowNav" href="/mlflow/" target="_blank" rel="noopener" class="btn btn-quiet ml-auto hidden"
+       title="Traces and runs in MLflow's own UI">MLflow ↗</a>
   </div>
 </header>
 
 <!-- ─────────────────────────── Run ─────────────────────────── -->
 <div id="view-run" class="view mx-auto max-w-[1500px] p-4 lg:p-6" hidden>
-  <form id="form">
-    <!-- The matrix: what gets run. Everything needed to press Run sits in this bar. -->
-    <section class="panel p-4" aria-label="Matrix">
-      <div class="flex flex-wrap items-start gap-x-8 gap-y-4">
-        <fieldset>
-          <legend class="group-label">Models</legend>
-          <div id="modelChoices" class="flex flex-wrap gap-1.5"></div>
-        </fieldset>
-        <fieldset>
-          <legend class="group-label">Harness</legend>
-          <div id="harnessChoices" class="flex gap-1.5"></div>
-        </fieldset>
-        <fieldset class="min-w-0">
-          <legend class="group-label">Business context
-            <button type="button" id="contextExplain" class="link ml-1.5 text-xs font-normal">What's the difference?</button></legend>
-          <div id="contextChoices" class="flex flex-wrap gap-1.5"></div>
-        </fieldset>
-        <label class="flex flex-col">
-          <span class="group-label">Runs</span>
-          <input id="repeats" type="number" min="1" max="10" step="1" value="1" required
-                 class="input mt-0 w-20 py-1.5 tabular-nums" title="Sequential repeats of the whole matrix (1–10)">
-        </label>
+  <form id="form" class="panel p-4" aria-label="Matrix">
+    <div class="flex flex-wrap items-end gap-x-8 gap-y-4">
+      <fieldset>
+        <legend class="group-label">Models</legend>
+        <div id="modelChoices" class="flex flex-wrap gap-1.5"></div>
+      </fieldset>
+      <fieldset>
+        <legend class="group-label">Harness</legend>
+        <div id="harnessChoices" class="flex gap-1.5"></div>
+      </fieldset>
+      <fieldset class="min-w-0">
+        <legend class="group-label">Target</legend>
+        <div id="contextChoices" class="flex flex-wrap gap-1.5"></div>
+      </fieldset>
+      <label class="flex flex-col">
+        <span class="group-label">Questions</span>
+        <select id="questionSet" class="input mt-0 w-auto py-1.5"></select>
+      </label>
+      <label class="flex flex-col">
+        <span class="group-label">Runs</span>
+        <input id="repeats" type="number" min="1" max="10" step="1" value="1" required
+               class="input mt-0 w-20 py-1.5 tabular-nums" title="Sequential repeats of the whole matrix (1–10)">
+      </label>
+      <div class="flex flex-wrap items-center gap-x-4 gap-y-2 lg:ml-auto">
+        <p id="matrixCount" class="text-sm tabular-nums text-ink-muted"></p>
+        <button id="runBtn" type="submit" class="btn btn-primary px-5 py-2.5">Run matrix</button>
       </div>
-      <div class="mt-4 flex flex-wrap items-end gap-x-3 gap-y-3 border-t border-border pt-4">
-        <label class="field-label w-full sm:w-64">Anthropic API key
-          <input id="apiKey" type="password" autocomplete="off" required placeholder="sk-ant-..." class="input font-mono">
-        </label>
-        <label class="field-label w-full sm:w-52">Workspace ID <span class="font-normal text-ink-subtle">(optional)</span>
-          <input id="workspaceId" autocomplete="off" placeholder="wrkspc_..." class="input font-mono"
-                 title="Needed when the key isn't scoped to a workspace (sent as anthropic-workspace-id)">
-        </label>
-        <label class="flex items-center gap-2 pb-2.5 text-xs text-ink-muted">
-          <input id="rememberKey" type="checkbox" class="accent-[rgb(var(--accent))]"> Remember in this browser
-        </label>
-        <div class="flex w-full flex-wrap items-center justify-end gap-x-4 gap-y-2 lg:ml-auto lg:w-auto">
-          <p id="matrixCount" class="text-sm tabular-nums text-ink-muted"></p>
-          <button id="runBtn" type="submit" class="btn btn-primary px-5 py-2.5">Run matrix</button>
-        </div>
-      </div>
-    </section>
-
-    <div id="status" class="notice notice-info mt-3 hidden" role="status"></div>
-
-    <nav class="mt-5 flex gap-6 overflow-x-auto border-b border-border" role="tablist" aria-label="Run sections">
-      <button type="button" class="subtab" role="tab" data-subtab="results" aria-controls="panel-results">Results</button>
-      <button type="button" class="subtab" role="tab" data-subtab="prompts" aria-controls="panel-prompts">Prompts <span id="promptCount" class="tabular-nums text-ink-subtle"></span></button>
-      <button type="button" class="subtab" role="tab" data-subtab="judge" aria-controls="panel-judge">Judge and harness</button>
-      <button type="button" class="subtab" role="tab" data-subtab="reference" aria-controls="panel-reference">What the agent sees</button>
-    </nav>
-
-    <section id="panel-prompts" class="subpanel pt-5" role="tabpanel" hidden>
-      <div class="mb-3 flex flex-wrap items-baseline justify-between gap-2">
-        <p class="hint max-w-[72ch]">Questions in plain language. Expected SQL is optional: when given, a case also has to return the same rows.</p>
-        <div class="flex flex-wrap items-center gap-2">
-          <label class="flex items-center gap-2 text-sm text-ink-muted">Sample set
-            <select id="promptSet" class="input mt-0 w-auto py-1.5">
-              <option value="benchmark">Benchmark (22)</option>
-              <option value="holdout">Held-out (10)</option>
-            </select></label>
-          <button type="button" id="addPrompt" class="btn btn-outline">Add prompt</button>
-        </div>
-      </div>
-      <div class="hidden grid-cols-[2rem_minmax(0,2fr)_minmax(0,3fr)_2.25rem] gap-3 px-3 pb-1.5 text-xs font-medium text-ink-muted md:grid">
-        <span></span><span>Question</span><span>Expected SQL</span><span></span>
-      </div>
-      <ol id="prompts" class="panel divide-y divide-border"></ol>
-    </section>
-
-    <section id="panel-judge" class="subpanel pt-5" role="tabpanel" hidden>
-      <div class="grid gap-5 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
-        <div class="panel space-y-3 p-4">
-          <h2 class="panel-title">Judge</h2>
-          <label class="field-label">Judge model
-            <select id="judgeModel" class="input sm:max-w-xs"></select>
-          </label>
-          <label class="field-label">Criteria
-            <textarea id="rubric" rows="12" required class="input text-[13px] leading-relaxed"></textarea>
-          </label>
-          <p class="hint">Passed to <code>LLMJudge</code>. A case passes only if the query runs, matches the expected result (when given), and the judge passes it.</p>
-        </div>
-        <div id="harnessBox" class="panel space-y-3 p-4">
-          <div>
-            <h2 class="panel-title">Harness capabilities</h2>
-            <p class="hint">What cells with the harness on get: the shared core, plus the group for that cell's business context. Cells with it off get none of these.</p>
-          </div>
-          <div id="harnessList" class="space-y-4 text-sm"></div>
-        </div>
-      </div>
-    </section>
-
-    <section id="panel-reference" class="subpanel pt-5" role="tabpanel" hidden>
-      <div class="grid gap-5 lg:grid-cols-[220px_minmax(0,1fr)]">
-        <div class="flex gap-1 overflow-x-auto lg:flex-col" role="group" aria-label="Reference">
-          <button type="button" class="refbtn" data-ref="contexts">Business contexts</button>
-          <button type="button" class="refbtn" data-ref="schema">Warehouse catalog <span id="tableCount" class="text-ink-subtle"></span></button>
-          <button type="button" class="refbtn" data-ref="catalog">dbt MetricFlow</button>
-          <button type="button" class="refbtn" data-ref="malloyModel">Malloy model</button>
-        </div>
-        <div class="min-w-0">
-          <div data-refpanel="contexts">
-            <p class="hint mb-3">What each business-context option adds to the agent's prompt or tools.</p>
-            <dl id="contextHelp" class="panel divide-y divide-border text-sm"></dl>
-          </div>
-          <div data-refpanel="schema" hidden>
-            <p class="hint mb-2">The raw-SQL agent doesn't get this up front. It discovers tables with <code>list_tables</code> and <code>describe_table</code>.</p>
-            <pre id="schema" class="code max-h-[70vh] overflow-auto"></pre>
-          </div>
-          <div data-refpanel="catalog" hidden>
-            <p class="hint mb-2">The metrics catalog given to the agent in dbt MetricFlow mode, generated from the dbt project's semantic models and metrics.</p>
-            <pre id="catalog" class="code max-h-[60vh] overflow-auto whitespace-pre-wrap"></pre>
-            <details class="mt-3">
-              <summary class="cursor-pointer text-sm font-medium text-ink">dbt YAML source <span class="font-normal text-ink-muted">(semantic models and metrics; not shown to the agent)</span></summary>
-              <pre id="metricflowYaml" class="code mt-2 max-h-[60vh] overflow-auto"></pre>
-            </details>
-          </div>
-          <div data-refpanel="malloyModel" hidden>
-            <p class="hint mb-2">Given to the agent in Malloy mode. Same governed definitions as the dbt metrics, with joined sources.</p>
-            <pre id="malloyModel" class="code max-h-[70vh] overflow-auto"></pre>
-          </div>
-        </div>
-      </div>
-    </section>
+    </div>
   </form>
 
-  <main id="panel-results" class="subpanel min-w-0 space-y-5 pt-5" role="tabpanel">
+  <div id="status" class="notice notice-info mt-3 hidden" role="status"></div>
+
+  <main class="min-w-0 space-y-5 pt-5">
     <div id="loadedBanner" class="notice notice-info hidden flex flex-wrap items-center justify-between gap-2"></div>
     <section id="matrixWrap" class="panel hidden p-4">
       <div class="mb-1 flex flex-wrap items-baseline justify-between gap-3">
         <h2 class="panel-title">Pass rate by cell</h2>
         <div class="flex items-center gap-3 text-xs">
-          <a id="matrixTraces" class="link hidden" href="#/traces">Traces for this matrix</a>
           <a id="mlflowLink" target="_blank" rel="noopener" class="hidden text-ink-muted hover:text-ink"
              title="This matrix's parent run in MLflow's own UI">in MLflow ↗</a>
         </div>
       </div>
-      <p class="hint mb-3">Select a cell for case-level detail. Time is wall clock for the cell, including queueing behind other cells and judging.</p>
+      <p class="hint mb-3">Select a cell for case-level detail. Time is wall clock for the cell, including queueing behind other cells. Cost is the agent's tokens at list prices (<code>app/pricing.py</code>).</p>
       <p id="runTimes" class="mb-3 hidden text-sm tabular-nums text-ink-muted" aria-live="off"></p>
-      <div class="mb-3 flex flex-wrap items-end gap-x-4 gap-y-2 rounded-control bg-surface-2 px-3 py-2.5">
-        <label class="field-label text-xs">Rank cells by (★)
-          <select id="rankBy" class="score-input input mt-1 block w-auto py-1.5">
-            <option value="net_value" selected>Expected net value (accuracy and cost)</option>
-            <option value="pass_k">pass^k (consistent accuracy; pass rate when 1 run)</option>
-            <option value="pass_rate">Mean pass rate (accuracy only)</option>
-          </select>
-        </label>
-        <label class="field-label text-xs">Value of a correct answer ($)
-          <input id="valueCorrect" type="number" min="0" step="any" value="1.00" class="score-input input mt-1 w-28 py-1.5 tabular-nums">
-        </label>
-        <label class="field-label text-xs">Loss from a wrong answer ($)
-          <input id="lossWrong" type="number" min="0" step="any" value="1.00" class="score-input input mt-1 w-28 py-1.5 tabular-nums">
-        </label>
-        <p class="hint min-w-[260px] flex-1 pb-1.5">Net value per question = P(correct) × value − P(wrong) × loss − token cost. Changing these re-scores instantly; nothing is re-run.</p>
-      </div>
       <div class="overflow-x-auto"><table id="matrix" class="w-full border-separate border-spacing-1.5 text-sm"></table></div>
-    </section>
-    <section id="econWrap" class="panel hidden p-4">
-      <h2 class="panel-title mb-1">Accuracy vs. cost</h2>
-      <p class="hint mb-3 max-w-[100ch]">Each point is a cell. The line is the Pareto frontier: a cell is on it if no other cell is both at least as
-        accurate and no more expensive. Cells below the line are dominated however you weigh accuracy against cost.</p>
-      <div id="econLegend" class="mb-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-ink-muted"></div>
-      <div id="econChart" class="relative"></div>
-      <details class="mt-3" open>
-        <summary class="cursor-pointer text-sm">Table view and break-even values</summary>
-        <div class="mt-2 overflow-x-auto"><table id="econTable" class="data-table w-full text-xs tabular-nums"></table></div>
-        <p class="hint mt-2">Intervals are 95% cluster-bootstrap intervals (prompts resampled with all their runs, 2,000 draws).
-          Break-even is the value of a correct answer above which the next frontier cell's extra accuracy pays for its extra cost: V* = Δcost / Δaccuracy − loss.</p>
-      </details>
-      <details class="mt-2">
-        <summary class="cursor-pointer text-sm">Token prices ($ per 1M tokens) <span id="pricesAsOf" class="text-xs text-ink-muted"></span></summary>
-        <table class="mt-2 w-full max-w-xl text-xs tabular-nums">
-          <thead><tr class="text-ink-muted"><th class="text-left font-medium">Model</th><th class="font-medium">Input</th><th class="font-medium">Output</th><th class="font-medium">Cache read</th><th class="font-medium">Cache write</th></tr></thead>
-          <tbody id="priceRows"></tbody>
-        </table>
-        <p class="hint mt-1">Only the agent's tokens are counted. Judge calls are evaluation overhead and identical across cells.</p>
-      </details>
     </section>
     <section id="perPromptWrap" class="panel hidden p-4">
       <h2 class="panel-title mb-3">Per prompt</h2>
@@ -282,7 +137,7 @@
     </section>
     <div id="detail"></div>
     <div id="empty" class="empty">
-      Pick models, harness and contexts above, then run the matrix. Results appear here as each cell finishes.
+      Pick models, harness and targets above, then run the matrix. Results appear here as each cell finishes.
       Past matrices are in <a class="link" href="#/history">History</a>.
     </div>
   </main>
@@ -293,37 +148,11 @@
   <div class="mb-4 flex flex-wrap items-end justify-between gap-3">
     <div>
       <h1 class="text-xl font-semibold tracking-tight">History</h1>
-      <p class="hint">Every matrix you've run, from the MLflow store. Open one to see it in the Run view, or select two or more to compare cells.</p>
+      <p class="hint">Every matrix you've run, from the MLflow store. Open one to see it in the Run view.</p>
     </div>
     <button id="historyRefresh" type="button" class="btn btn-outline">Refresh</button>
   </div>
   <div id="historyBody"></div>
-</div>
-
-<!-- ─────────────────────────── Traces ─────────────────────────── -->
-<div id="view-traces" class="view mx-auto max-w-[1500px] p-4 lg:p-6" hidden>
-  <div class="mb-4">
-    <h1 class="text-xl font-semibold tracking-tight">Traces</h1>
-    <p class="hint">One trace per agent answer, plus one per judge call. Select a trace to see each model call and tool call, its eval checks, and to label it.</p>
-  </div>
-  <div id="traceFilters" class="mb-3 flex flex-wrap items-end gap-2"></div>
-  <div class="grid gap-4 lg:grid-cols-[minmax(0,420px)_minmax(0,1fr)]">
-    <div id="traceList" class="panel max-h-[calc(100vh-220px)] min-h-[200px] overflow-y-auto"></div>
-    <div id="traceDetail" class="min-w-0"></div>
-  </div>
-</div>
-
-<!-- ─────────────────────────── Labels ─────────────────────────── -->
-<div id="view-labels" class="view mx-auto max-w-[1500px] p-4 lg:p-6" hidden>
-  <div class="mb-4 flex flex-wrap items-end justify-between gap-3">
-    <div>
-      <h1 class="text-xl font-semibold tracking-tight">Labels</h1>
-      <p class="hint max-w-[72ch]">Mark agent answers correct or wrong yourself, then see how often each automated check agrees with you.
-        Low agreement means the pass rates in the grid can't be trusted yet.</p>
-    </div>
-    <div id="labelScope"></div>
-  </div>
-  <div id="labelsBody"></div>
 </div>
 
 <!-- ─────────────────────────── Harness ─────────────────────────── -->
@@ -331,38 +160,12 @@
   <div class="mb-4">
     <h1 class="text-xl font-semibold tracking-tight">Harness</h1>
     <p class="hint max-w-[80ch]">Read only. Everything one target's agent is given: its instructions, tools and the checks around
-      them, with the default harness or with none. Built from the same code the evals run, so it always matches.</p>
+      them, with the harness or without it. Built from the same code the evals run, so it always matches.</p>
   </div>
   <div id="harnessControls" class="mb-4 flex flex-wrap items-center gap-x-6 gap-y-2"></div>
   <div id="harnessBody"></div>
 </div>
 
-<!-- Trace drawer (opened from case cards in the Run view) -->
-<div id="drawer" class="fixed inset-0 z-40 hidden" aria-hidden="true">
-  <div data-close class="absolute inset-0 bg-ink/30"></div>
-  <aside class="absolute inset-y-0 right-0 flex w-full max-w-[960px] flex-col border-l border-border bg-bg" role="dialog" aria-modal="true" aria-label="Trace">
-    <div class="flex items-center justify-between border-b border-border bg-surface px-4 py-2.5">
-      <p class="text-sm font-medium">Trace</p>
-      <div class="flex items-center gap-2">
-        <a id="drawerOpen" class="link text-sm" href="#/traces">Open in Traces</a>
-        <button data-close type="button" class="btn btn-quiet" aria-label="Close">Close</button>
-      </div>
-    </div>
-    <div id="drawerBody" class="flex-1 overflow-y-auto p-4"></div>
-  </aside>
-</div>
-
-<template id="promptTpl">
-  <li class="prompt-row grid grid-cols-[2rem_minmax(0,1fr)_2.25rem] items-start gap-x-3 gap-y-2 p-3 md:grid-cols-[2rem_minmax(0,2fr)_minmax(0,3fr)_2.25rem]">
-    <span class="p-num pt-2 text-right text-xs tabular-nums text-ink-subtle"></span>
-    <textarea class="p-text input mt-0 resize-y" rows="2" placeholder="Question in plain language" aria-label="Question"></textarea>
-    <button type="button" class="p-remove btn btn-quiet px-2 md:order-last" title="Remove prompt" aria-label="Remove prompt">✕</button>
-    <textarea class="p-sql input col-start-2 mt-0 resize-y font-mono text-xs md:col-start-auto" rows="2" placeholder="Optional: enables the result-set match" aria-label="Expected SQL"></textarea>
-  </li>
-</template>
-
 <script type="module" src="/static/js/app.js"></script>
-<!-- Context tooltip: one shared panel, positioned by run.js under the hovered or focused chip. -->
-<div id="contextTip" class="tip hidden" aria-hidden="true"></div>
 </body>
 </html>

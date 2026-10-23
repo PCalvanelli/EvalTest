@@ -1,6 +1,7 @@
 """Can each benchmark question be answered in dbt MetricFlow and in Malloy at all? A hand-written reference answer per
 question and target, graded with the eval's own result matcher against the expected SQL. This is the ceiling an agent
-can reach with each semantic layer (and its harness tools); it costs no API calls.
+can reach with each semantic layer (and its harness tools). It also checks that the two layers agree on every governed
+metric. It costs no API calls.
 
     uv run python -m app.expressibility
 """
@@ -8,14 +9,11 @@ can reach with each semantic layer (and its harness tools); it costs no API call
 from __future__ import annotations
 
 import asyncio
-import json
-import subprocess
-from pathlib import Path
 
 from . import db, malloy_bridge, metricflow_bridge
 from .metricflow_bridge import MetricDefinition as D, MetricFlowQueryWithSteps as Q, MetricInput as I, PostStep as P
+from .questions import QUESTION_SETS
 
-ROOT = Path(__file__).resolve().parent.parent
 day = lambda op, v: f"{{{{ TimeDimension('metric_time', 'day') }}}} {op} '{v}'"  # noqa: E731
 month = lambda op, v: f"{{{{ TimeDimension('metric_time', 'month') }}}} {op} '{v}'"  # noqa: E731
 dim = lambda name, cond: f"{{{{ Dimension('{name}') }}}} {cond}"  # noqa: E731
@@ -163,28 +161,42 @@ MALLOY: dict[str, str | None] = {
                    ' -> { select: q, active_subscriptions, change; where: q >= @2025-01-01 }'),
 }
 
-
-def prompt_sets() -> dict[str, list[dict]]:
-    """The sample prompt sets from static/js/config.js (the UI's source of truth)."""
-    js = ("import('./static/js/config.js').then(m => console.log(JSON.stringify("
-          "{benchmark: m.SAMPLE_PROMPTS, holdout: m.HOLDOUT_PROMPTS})))")
-    return json.loads(subprocess.run(['node', '-e', js], cwd=ROOT, capture_output=True, text=True, check=True).stdout)
-
-
-def grade(sql: str, expected: str | None) -> str:
-    if expected is None:
-        db.run_readonly(sql)
-        return 'runs (judge-only)'
-    return 'MATCH' if db.results_match(sql, expected) else 'differs'
+# Every governed metric, grouped: MetricFlow and Malloy must return the same rows. Malloy's aggregates follow
+# MetricFlow's column order, since the matcher only tries column permutations up to 6 columns.
+PARITY: dict[str, tuple[Q, str]] = {
+    'orders by month': (
+        Q(metrics=['order_count', 'gross_revenue', 'refunds', 'net_revenue', 'avg_order_value', 'active_customers'], group_by=['metric_time__month']),
+        'run: orders -> { group_by: m is order_date.month; aggregate: order_count, gross_revenue, refunds, net_revenue, active_customers, avg_order_value }'),
+    # Known customers' non-cancelled orders only. Otherwise the layers differ only in how they show missing values:
+    # MetricFlow gives NULL where Malloy gives 0 net revenue (cancelled) or labels a missing customer 'retail'/'unknown'.
+    'orders by segment/source/status': (
+        Q(metrics=['net_revenue', 'order_count'], group_by=['customer__customer_segment', 'customer__acquisition_source', 'order__order_status'],
+          where=[dim('order__order_status', "!= 'cancelled'"), "{{ Entity('customer') }} IS NOT NULL"]),
+        "run: orders -> { group_by: customer.customer_segment, customer.acquisition_source, order_status; aggregate: net_revenue, order_count; where: order_status != 'cancelled' and customer_key is not null }"),
+    'order lines by category': (
+        Q(metrics=['units_sold', 'product_revenue'], group_by=['product__category']),
+        'run: order_lines -> { group_by: products.category; aggregate: units_sold, product_revenue }'),
+    'subscriptions by month': (
+        Q(metrics=['mrr', 'active_subscriptions', 'new_subscriptions', 'churned_subscriptions'], group_by=['metric_time__month']),
+        'run: subscription_months -> { group_by: as_of_month; aggregate: mrr, active_subscriptions, new_subscriptions, churned_subscriptions }'),
+    'support by priority/segment': (
+        Q(metrics=['ticket_count', 'solved_tickets', 'avg_first_reply_hours', 'avg_resolution_hours'], group_by=['ticket__priority', 'customer__customer_segment']),
+        'run: tickets -> { group_by: priority, customer.customer_segment; aggregate: ticket_count, solved_tickets, avg_first_reply_hours, avg_resolution_hours }'),
+    'marketing by platform': (
+        Q(metrics=['ad_spend', 'clicks', 'impressions', 'cost_per_click', 'click_through_rate'], group_by=['ad_stat__platform']),
+        'run: ad_stats -> { group_by: platform; aggregate: ad_spend, total_clicks, total_impressions, cost_per_click, click_through_rate }'),
+    'inventory by warehouse on 2025-06-30': (
+        Q(metrics=['units_on_hand', 'units_reserved', 'units_available'], group_by=['inventory_snapshot__warehouse_code'], where=[day('=', '2025-06-30')]),
+        'run: inventory -> { group_by: warehouse_code; aggregate: units_on_hand, units_reserved, units_available; where: snapshot_date = @2025-06-30 }'),
+}
 
 
 async def main() -> None:
-    sets = prompt_sets()
     totals: dict[str, list[int]] = {}
-    for set_name, prompts in sets.items():
+    for set_name, prompts in QUESTION_SETS.items():
         print(f'\n{set_name} ({len(prompts)} questions)')
         for i, prompt in enumerate(prompts, 1):
-            key, expected, cells = f'{set_name}:{i}', prompt.get('expected_sql'), []
+            key, expected, cells = f'{set_name}:{i}', prompt['expected_sql'], []
             for target in ('metricflow', 'malloy'):
                 try:
                     if target == 'metricflow':
@@ -193,18 +205,30 @@ async def main() -> None:
                     else:
                         malloy = MALLOY.get(key)
                         sql = await malloy_bridge.compile(malloy) if malloy else None
-                    verdict = grade(sql, expected) if sql else 'not expressible'
+                    verdict = ('MATCH' if db.results_match(sql, expected) else 'differs') if sql else 'not expressible'
                 except Exception as e:
                     verdict = f'ERROR {str(e).splitlines()[0][:80]}'
-                ok = verdict in ('MATCH', 'runs (judge-only)')
+                ok = verdict == 'MATCH'
                 totals.setdefault(f'{set_name}/{target}', [0, 0])
                 totals[f'{set_name}/{target}'][0] += ok
                 totals[f'{set_name}/{target}'][1] += 1
                 cells.append(f'{target}: {verdict}')
             print(f'  {i:>2}. {prompt["text"][:58]:<58}  ' + '   '.join(cells))
+    print('\nparity (MetricFlow vs Malloy)')
+    agree = 0
+    for name, (query, malloy) in PARITY.items():
+        try:
+            ok = db.results_match(metricflow_bridge.compile(query), await malloy_bridge.compile(malloy))
+        except Exception as e:
+            print(f'  ERROR {name}: {str(e).splitlines()[0][:80]}')
+            ok = False
+        agree += ok
+        print(f'  {"agree" if ok else "DIFFER"}  {name}')
     print()
     for k, (ok, n) in totals.items():
         print(f'{k:<22} {ok}/{n} expressible ({ok / n:.0%})')
+    print(f'{"parity":<22} {agree}/{len(PARITY)} agree')
+    raise SystemExit(0 if agree == len(PARITY) and all(ok == n for ok, n in totals.values()) else 1)
 
 
 if __name__ == '__main__':

@@ -9,7 +9,6 @@ dependencies = [
     "duckdb",
     "pydantic-ai-slim[anthropic]",
     "anthropic<2",  # anthropic 2.x made BetaMessageParam a Union, which pydantic-ai 2.59 cannot instantiate
-    "pydantic-evals",
     "pydantic-ai-harness",
     "pyyaml",
     "mlflow>=3.17.2",

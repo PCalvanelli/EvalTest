@@ -1,24 +1,19 @@
-"""Text-to-SQL agent, built with or without Pydantic AI Harness capabilities, over raw SQL, dbt MetricFlow or Malloy."""
+"""Text-to-SQL agent over raw SQL, dbt MetricFlow or Malloy, built bare or with the harness."""
 
 from __future__ import annotations
 
-import inspect
 import json
 import re
-from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Literal
 
 from anthropic import AsyncAnthropic
-from pydantic import BaseModel, Field, create_model
+from pydantic import BaseModel, Field
 from pydantic_ai import Agent, ModelRetry, RunContext, ToolOutput
-from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
 from pydantic_ai.providers.anthropic import AnthropicProvider
-from pydantic_ai_harness import GuardrailResult, OutputGuardrail, Planning, SystemReminders, ToolGuardrail
+from pydantic_ai_harness import GuardrailResult, OutputGuardrail, ToolGuardrail
 from pydantic_ai_harness.guardrails import ToolCallInfo
-from pydantic_ai_harness.repair_tool_arguments import RepairToolArguments
-from pydantic_ai_harness.system_reminders import Reminder
 
 from . import db, malloy_bridge, metricflow_bridge
 from .metricflow_bridge import MetricDefinition, MetricFlowQuery, MetricFlowQueryWithSteps
@@ -34,17 +29,13 @@ class MetricFlowAnswer(BaseModel):
     explanation: str = Field(description='One or two sentences on how the query answers the question.')
 
 
-def _metricflow_answer_type(define: bool, steps: bool) -> type[BaseModel]:
-    """The MetricFlow answer for the enabled harness tools: query-time metric definitions and post-processing steps
-    travel with the query, so the compiled SQL is reproducible and reviewable. Baseline gets the plain answer."""
-    if not define and not steps:
-        return MetricFlowAnswer
-    fields: dict = {'query': (MetricFlowQueryWithSteps if steps else MetricFlowQuery,
-                              Field(description='The final MetricFlow query that answers the question.'))}
-    if define:
-        fields['metric_definitions'] = (list[MetricDefinition], Field(
-            default_factory=list, description='Every metric you defined with define_metric that the query uses.'))
-    return create_model('MetricFlowAnswerPlus', __base__=MetricFlowAnswer, **fields)
+class MetricFlowAnswerPlus(MetricFlowAnswer):
+    """The harness's MetricFlow answer: query-time metric definitions and post-processing steps travel with the query,
+    so the compiled SQL is reproducible and reviewable."""
+
+    query: MetricFlowQueryWithSteps = Field(description='The final MetricFlow query that answers the question.')
+    metric_definitions: list[MetricDefinition] = Field(
+        default_factory=list, description='Every metric you defined with define_metric that the query uses.')
 
 
 class MalloyAnswer(BaseModel):
@@ -85,7 +76,7 @@ MetricFlow quick reference:
 # The catalog goes last, in full or (with the harness's compact catalog) with each entity's dimensions described once.
 METRICFLOW_CATALOG = '\n<metrics_catalog>\n{catalog}\n</metrics_catalog>\n'
 
-# Added to the MetricFlow instructions when the harness gives the agent define_metric.
+# Added to the MetricFlow instructions with the harness: result steps, then query-time metrics.
 POST_STEPS_INSTRUCTIONS = """
 For per-group winners (the top product per category, the lowest day per warehouse) or a share of a total, add
 `post_process` steps to the query: `rank_filter` (partition_by, order_by with '-' for highest first, keep; ties are
@@ -100,15 +91,14 @@ When no governed metric answers the question directly, define one in the `define
 from existing metrics: `derived` (an expression over inputs; `offset_window` reads an input from an earlier period, for
 period-over-period comparisons), `cumulative` (running totals, rolling `window`s such as '3 months', or
 `grain_to_date` such as year for year-to-date) or `ratio` (numerator / denominator, each optionally filtered), and use
-it in the same query's metrics. MetricFlow validates it first; it stays defined for later queries.{listing}
+it in the same query's metrics. MetricFlow validates it first; it stays defined for later queries.
 Offset and cumulative metrics need `metric_time` in the group_by. Cumulative windows are anchored on days, so for a
 trailing N-month figure at month grain, use a derived metric over offset inputs instead (e.g. the current month plus
 `offset_window` '1 month' and '2 months').
 """
-DEFINE_LISTING = ' List every metric you defined that the final query uses in `metric_definitions` of your final answer.'
 
-# Added for every target when the harness's answer-by-reference is on: the final answer cites a run instead of
-# rewriting the query, and can go in the same response as the query.
+# Added for every target with the harness: the final answer cites a run instead of rewriting the query, and can go
+# in the same response as the query.
 ANSWER_BY_REF_INSTRUCTIONS = """
 Every `{tool}` result has a run number. Finish by calling `answer` with the run that answers the question and a short
 explanation of what that query does; don't rewrite the query. When you are confident of the query, send it and
@@ -117,8 +107,8 @@ result, and shows you the rows if anything needs fixing. Don't quote numbers in 
 and don't re-run a query you've already run.
 """
 
-# Added for every target with the harness's answer checklist: the reviewer's fit checks, given to the agent up front so
-# the first answer passes review instead of costing a round trip.
+# Added for every target with the harness: the reviewer's fit checks, given to the agent up front so the first answer
+# passes review instead of costing a round trip.
 ANSWER_CHECKLIST_INSTRUCTIONS = """
 Before you answer, check your query against the question the way a reviewer will:
 - Columns: exactly what the question asks for. No id or key columns, helper columns or extra metrics nobody asked
@@ -154,53 +144,16 @@ Malloy quick reference:
 </malloy_model>
 """
 
-# Capabilities the harness mode can switch on. Keys are what the UI sends; `default` ones are pre-selected.
-# `target` says which business context a capability serves: 'all' is the shared core, the others are the
-# target-specific harnesses (each target has its own failure modes and rules). A cell gets the core plus its own
-# target's group. The harness adds process (caching, checks, review, tools, retries), never business knowledge:
-# definitions belong to the business-context axis, so mixing them in here would confound the comparison.
+# The harness adds process (caching, checks, review, retries, lean tool results), never business knowledge:
+# definitions belong to the target axis, so mixing them in here would confound the comparison. Each target also gets
+# its own checks for its own failure modes (deprecated tables for raw SQL, query-time metrics and result steps for
+# MetricFlow, flat output for Malloy).
 LEAN_MAX_ROWS = 20
-HARNESS_CAPABILITIES: dict[str, dict] = {
-    'prompt_cache': {'target': 'all', 'default': True, 'label': 'Prompt caching: re-read the instructions, tool '
-                     'definitions and conversation from cache each turn (0.1x input price) instead of re-billing them'},
-    'answer_review': {'target': 'all', 'default': True, 'label': 'Answer review: before answering, a fresh reviewer '
-                      'checks the final query, explanation and rows against the question with a checklist for the '
-                      'target, and sends concrete problems back (max 2)'},
-    'output_check': {'target': 'all', 'default': True, 'label': 'Output check: the final query must execute and '
-                     'return rows, otherwise the model retries'},
-    'sql_guardrail': {'target': 'all', 'default': True, 'label': "Tool guardrail: block non-SELECT SQL / queries "
-                      "that don't compile before they run"},
-    'answer_by_ref': {'target': 'all', 'default': True, 'label': 'Cite the run: query results are numbered and the '
-                      'final answer cites a run instead of rewriting the query, so it can go in the same response as '
-                      'the query (one turn for a straightforward question)'},
-    'answer_checklist': {'target': 'all', 'default': True, 'label': "Answer checklist: the agent gets the reviewer's "
-                         'fit checks (columns, rows, explanation) up front, so the first answer passes review'},
-    'lean_results': {'target': 'all', 'default': True, 'label': 'Lean tool results: no generated SQL, at most '
-                     f'{LEAN_MAX_ROWS} rows, and a repeated query points at its earlier run instead of re-sending rows'},
-    'reminders': {'target': 'all', 'default': False, 'label': 'System reminders: re-inject "verify by running the '
-                  'query" each turn (adds tokens)'},
-    'planning': {'target': 'all', 'default': False, 'label': 'Planning: a write_plan tool to outline the query first '
-                 '(adds a turn)'},
-    'repair_args': {'target': 'all', 'default': False, 'label': 'Repair tool arguments: fix malformed JSON tool args'},
-    'raw_deprecations': {'target': 'raw', 'default': True, 'label': 'Deprecation lint: flag tables the warehouse '
-                         'documents as DEPRECATED, in run_sql and in the final query'},
-    'raw_column_docs': {'target': 'raw', 'default': True, 'label': 'Column documentation: the reviewer sees the '
-                        'documentation of every column the final query uses (works with answer review)'},
-    'mf_compact_catalog': {'target': 'metricflow', 'default': True, 'label': 'Compact catalog: the same metrics '
-                           'catalog with each entity\'s dimensions described once instead of under every metric group'},
-    'mf_define_metric': {'target': 'metricflow', 'default': True, 'label': 'Define metrics: query_metrics can '
-                         'define a validated derived, cumulative or ratio metric from governed metrics when none fits '
-                         '(period-over-period, running and rolling totals, filtered shares)'},
-    'mf_post_steps': {'target': 'metricflow', 'default': True, 'label': 'Result steps: per-group top-N and share of '
-                      'total applied to the governed result rows (like a BI tool on the semantic layer)'},
-    'malloy_flat_output': {'target': 'malloy', 'default': True, 'label': 'Flat output: the final result must not '
-                           'contain nested rows (from nest:); the model flattens it'},
-}
-TARGET_NAMES = {'all': 'Every target', 'raw': 'Raw SQL', 'metricflow': 'dbt MetricFlow', 'malloy': 'Malloy'}
 MAX_REVIEWS = 2
 MAX_EMPTY_RETRIES = 1
 MAX_EXEC_RETRIES = 2
 MAX_LINT_RETRIES = 1
+HARNESS_RETRIES = MAX_EXEC_RETRIES + MAX_EMPTY_RETRIES + MAX_LINT_RETRIES + MAX_REVIEWS + 1
 
 REVIEW_INSTRUCTIONS = """\
 You review a data analyst's final answer before it goes to the person who asked the question. You do not know the
@@ -352,11 +305,10 @@ def _has_nested(rows: list) -> bool:
                for row in rows for v in row)
 
 
-def _final_answer_guard(enabled: Sequence[str], context: Context, reviewer: AnthropicModel | None, log: HarnessLog):
-    """One output guard for the enabled checks, in order: the final query must run and return rows, then the target's
-    lints, then a reviewer with fresh context checks it against the question. Every step is bounded, so a stubborn
-    case ends with an answer on record, not a run error."""
-    check, review = 'output_check' in enabled, 'answer_review' in enabled and reviewer is not None
+def _final_answer_guard(context: Context, reviewer: AnthropicModel, log: HarnessLog):
+    """One output guard, in order: the final query must run and return rows, then the target's lints, then a reviewer
+    with fresh context checks it against the question. Every step is bounded, so a stubborn case ends with an answer on
+    record, not a run error."""
 
     async def guard(ctx: RunContext, output: object) -> GuardrailResult:
         assert isinstance(output, (SQLAnswer, MetricFlowAnswer, MalloyAnswer))
@@ -370,18 +322,18 @@ def _final_answer_guard(enabled: Sequence[str], context: Context, reviewer: Anth
             return GuardrailResult.retry(f'Your final query failed to execute: {e}. Fix it and try again.')
         rows = result['rows']
         blank = not rows or (len(rows) == 1 and all(v is None for v in rows[0]))
-        if check and blank and log.empty_retries < MAX_EMPTY_RETRIES:
+        if blank and log.empty_retries < MAX_EMPTY_RETRIES:
             log.empty_retries += 1
             return GuardrailResult.retry(
                 'Your final query returns no data (no rows, or a single row of NULLs). Check filter values, date '
                 'ranges and joins against the actual data. If an empty result really is the answer, keep the query '
                 'and say so in the explanation.'
             )
-        if lint := _target_lint(enabled, context, output, sql, rows, log):
+        if lint := _target_lint(context, output, sql, rows, log):
             return GuardrailResult.retry(lint)
-        if review and log.reviews < MAX_REVIEWS:
+        if log.reviews < MAX_REVIEWS:
             log.reviews += 1
-            docs = _column_docs(sql) if context == 'raw' and 'raw_column_docs' in enabled else ''
+            docs = _column_docs(sql) if context == 'raw' else ''
             instructions = REVIEW_INSTRUCTIONS.format(target_rules=REVIEW_TARGET_RULES[context])
             verdict = await Agent(reviewer, output_type=Review, instructions=instructions).run(
                 f'Question:\n{ctx.prompt}\n\n{_answer_text(output, sql)}\n\nExplanation:\n{output.explanation}\n\n'
@@ -402,16 +354,16 @@ def _final_answer_guard(enabled: Sequence[str], context: Context, reviewer: Anth
     return guard
 
 
-def _target_lint(enabled: Sequence[str], context: Context, output: object, sql: str, rows: list, log: HarnessLog) -> str | None:
+def _target_lint(context: Context, output: object, sql: str, rows: list, log: HarnessLog) -> str | None:
     """The target's own rules for a final answer; returns a retry message, at most once per case."""
     if log.lint_retries >= MAX_LINT_RETRIES:
         return None
     message = None
-    if context == 'raw' and 'raw_deprecations' in enabled and isinstance(output, SQLAnswer):
+    if context == 'raw' and isinstance(output, SQLAnswer):
         if deprecated := _deprecated_tables(_tables_and_columns(sql)[0]):
             message = 'Your final query reads tables the warehouse documents as deprecated:\n' + '\n'.join(
                 f'- {t}: {doc}' for t, doc in deprecated.items()) + '\nUse the current tables instead.'
-    elif context == 'malloy' and 'malloy_flat_output' in enabled and _has_nested(rows):
+    elif context == 'malloy' and _has_nested(rows):
         message = ('Your final result has nested rows (from nest:). Return a flat result: one row per group with '
                    'plain columns, using group_by and aggregate (or a pipeline stage) instead of nest.')
     if message:
@@ -421,61 +373,24 @@ def _target_lint(enabled: Sequence[str], context: Context, output: object, sql: 
 
 
 Context = Literal['raw', 'metricflow', 'malloy']
-# What each context gives the agent. The UI shows these in the context tooltips and the reference tab.
+TOOLS = {'raw': 'run_sql', 'metricflow': 'query_metrics', 'malloy': 'run_malloy'}  # each target's query tool
+# What each context gives the agent, in display order. The UI takes target names and tooltips from here.
 CONTEXTS: dict[str, dict[str, str]] = {
     'raw': {
         'name': 'Raw SQL',
         'summary': 'No business context. The agent explores the warehouse and decides what business terms mean itself.',
-        'writes': 'DuckDB SQL',
-        'tools': 'list_tables, describe_table, run_sql',
     },
     'metricflow': {
         'name': 'dbt MetricFlow',
         'summary': 'The dbt Semantic Layer: governed metrics and dimensions, with joins handled by MetricFlow. '
                    'No warehouse tables, no SQL.',
-        'writes': 'A MetricFlow query (metrics, group by, where, order, limit)',
-        'tools': 'query_metrics',
     },
     'malloy': {
         'name': 'Malloy',
         'summary': 'A Malloy semantic model with the same governed definitions, joined sources and reusable measures. '
                    'No SQL.',
-        'writes': 'A Malloy query',
-        'tools': 'run_malloy',
     },
 }
-
-
-def target_capabilities(enabled: Sequence[str], context: Context) -> list[str]:
-    """The enabled capabilities that apply to this target: the shared core plus the target's own group."""
-    return [k for k in enabled if HARNESS_CAPABILITIES.get(k, {}).get('target') in ('all', context)]
-
-
-def _build_capabilities(
-    enabled: Sequence[str], context: Context, reviewer: AnthropicModel | None, log: HarnessLog,
-    definitions: list[MetricDefinition],
-) -> list[AbstractCapability]:
-    tool, guard = {
-        'metricflow': ('query_metrics', _block_uncompilable_metricflow(definitions)),
-        'malloy': ('run_malloy', _block_uncompilable_malloy),
-    }.get(context, ('run_sql', _block_writes))
-    factories = {
-        'sql_guardrail': lambda: ToolGuardrail(guard=guard, tools=[tool]),
-        'reminders': lambda: SystemReminders(
-            reminders=[
-                Reminder(
-                    f'Before answering, run your final query with {tool} and check the rows actually answer '
-                    'the question (right grain, filters, ordering, and limit).'
-                )
-            ]
-        ),
-        'planning': lambda: Planning(tools=['write_plan']),
-        'repair_args': lambda: RepairToolArguments(),
-    }
-    caps = [factories[name]() for name in enabled if name in factories]
-    if 'output_check' in enabled or 'answer_review' in enabled:
-        caps.append(OutputGuardrail(guard=_final_answer_guard(enabled, context, reviewer, log)))
-    return caps
 
 
 @dataclass
@@ -528,96 +443,91 @@ def _query_key(value: object) -> str:
     return json.dumps(value, sort_keys=True, default=str)
 
 
-def instruction_parts(context: Context, harness: Sequence[str]) -> list[dict]:
-    """The agent's instructions in order, each part tagged with the capability that adds it (None for the target's
-    own base instructions and catalog). build_agent joins them; the Harness view shows them apart."""
-    harness = target_capabilities(harness, context)
-    by_ref = 'answer_by_ref' in harness
-    tool = {'metricflow': 'query_metrics', 'malloy': 'run_malloy'}.get(context, 'run_sql')
-    parts = [{'source': None, 'title': 'Base instructions',
+def instruction_parts(context: Context, harness: bool) -> list[dict]:
+    """The agent's instructions in order, each part tagged with whether the harness adds it. build_agent joins them;
+    the Harness view shows them apart."""
+    tool = TOOLS[context]
+    parts = [{'harness': False, 'title': 'Base instructions',
               'text': {'raw': INSTRUCTIONS, 'metricflow': METRICFLOW_INSTRUCTIONS, 'malloy': MALLOY_INSTRUCTIONS}[context]}]
     if context == 'metricflow':
-        if 'mf_define_metric' in harness:
-            parts.append({'source': 'mf_define_metric', 'title': 'Defining metrics',
-                          'text': DEFINE_METRIC_INSTRUCTIONS.format(listing='' if by_ref else DEFINE_LISTING)})
-        if 'mf_post_steps' in harness:
-            parts.append({'source': 'mf_post_steps', 'title': 'Result steps', 'text': POST_STEPS_INSTRUCTIONS})
-        compact = 'mf_compact_catalog' in harness
-        catalog = metricflow_bridge.compact_catalog_text() if compact else metricflow_bridge.catalog_text()
-        parts.append({'source': 'mf_compact_catalog' if compact else None,
-                      'title': 'Metrics catalog (compact)' if compact else 'Metrics catalog',
+        if harness:
+            parts += [{'harness': True, 'title': 'Defining metrics', 'text': DEFINE_METRIC_INSTRUCTIONS},
+                      {'harness': True, 'title': 'Result steps', 'text': POST_STEPS_INSTRUCTIONS}]
+        catalog = metricflow_bridge.compact_catalog_text() if harness else metricflow_bridge.catalog_text()
+        parts.append({'harness': harness, 'title': 'Metrics catalog (compact)' if harness else 'Metrics catalog',
                       'text': METRICFLOW_CATALOG.format(catalog=catalog)})
-    if by_ref:
-        parts.append({'source': 'answer_by_ref', 'title': 'Cite the run',
-                      'text': ANSWER_BY_REF_INSTRUCTIONS.format(tool=tool)})
-    if 'answer_checklist' in harness:
-        parts.append({'source': 'answer_checklist', 'title': 'Answer checklist', 'text': ANSWER_CHECKLIST_INSTRUCTIONS})
+    if harness:
+        parts += [{'harness': True, 'title': 'Cite the run', 'text': ANSWER_BY_REF_INSTRUCTIONS.format(tool=tool)},
+                  {'harness': True, 'title': 'Answer checklist', 'text': ANSWER_CHECKLIST_INSTRUCTIONS}]
     return parts
 
 
-def make_model(model_name: str, api_key: str, workspace_id: str | None = None) -> AnthropicModel:
-    """Anthropic model; keys not scoped to a workspace need the workspace id header."""
-    headers = {'anthropic-workspace-id': workspace_id} if workspace_id else None
-    client = AsyncAnthropic(api_key=api_key, default_headers=headers)
-    return AnthropicModel(model_name, provider=AnthropicProvider(anthropic_client=client))
+def make_model(model_name: str, api_key: str | None = None) -> AnthropicModel:
+    """Anthropic model, keyed from ANTHROPIC_API_KEY unless a key is given."""
+    return AnthropicModel(model_name, provider=AnthropicProvider(anthropic_client=AsyncAnthropic(api_key=api_key)))
 
 
 def build_agent(
     model_name: str,
-    api_key: str,
-    harness: Sequence[str] = (),
-    workspace_id: str | None = None,
     context: Context = 'raw',
+    harness: bool = False,
     log: HarnessLog | None = None,
+    api_key: str | None = None,
 ) -> Agent[None, SQLAnswer] | Agent[None, MetricFlowAnswer] | Agent[None, MalloyAnswer]:
-    """Build a fresh agent. `harness` lists enabled capability keys (empty = baseline). `context` picks what
-    business knowledge it gets: none (raw SQL), or a semantic layer (dbt MetricFlow or Malloy) instead of SQL.
-    `log` collects what the harness did (reviews, reviewer tokens) for the case report."""
+    """Build a fresh agent for one target, bare or with the harness. `log` collects what the harness did (reviews,
+    reviewer tokens) for the case report."""
     log = log if log is not None else HarnessLog()
-    harness = target_capabilities(harness, context)
-    reviewer = make_model(model_name, api_key, workspace_id) if 'answer_review' in harness else None
-    cache = 'prompt_cache' in harness
-    guarded = 'output_check' in harness or 'answer_review' in harness
-    by_ref, lean = 'answer_by_ref' in harness, 'lean_results' in harness
-    can_define = context == 'metricflow' and 'mf_define_metric' in harness
-    steps = context == 'metricflow' and 'mf_post_steps' in harness
     definitions: list[MetricDefinition] = []  # metrics this case defined in query_metrics
     runs = QueryRuns()
-    tool = {'metricflow': 'query_metrics', 'malloy': 'run_malloy'}.get(context, 'run_sql')
-    answer_type = (_metricflow_answer_type(can_define, steps) if context == 'metricflow' else
-                   {'malloy': MalloyAnswer}.get(context, SQLAnswer))
-    instructions = ''.join(p['text'] for p in instruction_parts(context, harness))
+    tool = TOOLS[context]
+    answer_type = {'raw': SQLAnswer, 'metricflow': MetricFlowAnswerPlus if harness else MetricFlowAnswer,
+                   'malloy': MalloyAnswer}[context]
+    capabilities = []
+    if harness:
+        guard = {'raw': _block_writes, 'metricflow': _block_uncompilable_metricflow(definitions),
+                 'malloy': _block_uncompilable_malloy}[context]
+        reviewer = make_model(model_name, api_key)
+        capabilities = [ToolGuardrail(guard=guard, tools=[tool]),
+                        OutputGuardrail(guard=_final_answer_guard(context, reviewer, log))]
     agent = Agent(
-        make_model(model_name, api_key, workspace_id),
-        output_type=_answer_tool(answer_type, runs, tool) if by_ref else answer_type,
-        instructions=instructions,
-        capabilities=_build_capabilities(harness, context, reviewer, log, definitions),
+        make_model(model_name, api_key),
+        output_type=_answer_tool(answer_type, runs, tool) if harness else answer_type,
+        instructions=''.join(p['text'] for p in instruction_parts(context, harness)),
+        capabilities=capabilities,
         model_settings=AnthropicModelSettings(
             anthropic_cache_instructions=True, anthropic_cache_tool_definitions=True, anthropic_cache_messages=True
-        ) if cache else None,
+        ) if harness else None,
         # Output checks retry through the same budget as tool errors; leave room so they never turn into hard failures.
-        retries=MAX_EXEC_RETRIES + MAX_EMPTY_RETRIES + MAX_LINT_RETRIES + MAX_REVIEWS + 1 if guarded else 2,
+        retries=HARNESS_RETRIES if harness else 2,
     )
 
     def run_query(key: str, fields: dict, sql: str | None, error: str | None = None) -> dict | str:
-        """Run one query for a query tool: numbered when answers cite runs, lean when results are lean."""
-        if lean and (earlier := runs.repeat_of(key)) is not None:
+        """Run one query for a query tool. With the harness, runs are numbered for citing and results are lean."""
+        if harness and (earlier := runs.repeat_of(key)) is not None:
             return {'run': earlier, 'note': f'Same query as run {earlier}; its rows are above.'}
         result = None
         if error is None:
             try:
-                result = db.run_readonly(sql, max_rows=LEAN_MAX_ROWS if lean else db.MAX_ROWS)
+                result = db.run_readonly(sql, max_rows=LEAN_MAX_ROWS if harness else db.MAX_ROWS)
             except Exception as e:
                 error = str(e)
         n = runs.add(key, fields, error)
         if error is not None:
-            return f'ERROR (run {n}): {error}' if by_ref else f'ERROR: {error}'
-        if context != 'raw' and not lean:
-            result = {'sql': sql, **result}
-        return {'run': n, **result} if by_ref else result
+            return f'ERROR (run {n}): {error}' if harness else f'ERROR: {error}'
+        if harness:
+            return {'run': n, **result}
+        return {'sql': sql, **result} if context != 'raw' else result
 
-    if context == 'metricflow':
-        def query_metrics(query: MetricFlowQuery, define: list[MetricDefinition] | None = None) -> dict | str:
+    def compile_and_run(key: str, fields: dict, query: MetricFlowQuery) -> dict | str:
+        try:
+            sql, error = metricflow_bridge.compile(query, definitions), None
+        except Exception as e:
+            sql, error = None, str(e)
+        return run_query(key, fields, sql, error)
+
+    if context == 'metricflow' and harness:
+        @agent.tool_plain
+        def query_metrics(query: MetricFlowQueryWithSteps, define: list[MetricDefinition] | None = None) -> dict | str:
             """Compile a MetricFlow query to SQL, run it, and return the columns, rows (capped) and total row count.
             `define`: metrics to define first, from existing metrics; they stay defined for later queries."""
             for metric in define or []:
@@ -628,22 +538,13 @@ def build_agent(
                 definitions[:] = [d for d in definitions if d.name != metric.name] + [metric]
                 log.defined_metrics += 1
             # A cited run carries the definitions in effect when it ran, so the answer compiles the same SQL.
-            fields = {'query': query} | ({'metric_definitions': list(definitions)} if can_define else {})
             key = _query_key([query.model_dump(), [d.model_dump() for d in definitions]])
-            try:
-                sql, error = metricflow_bridge.compile(query, definitions), None
-            except Exception as e:
-                sql, error = None, str(e)
-            return run_query(key, fields, sql, error)
-
-        # The tool takes the query type the harness enables (its schema is what the model sees), and `define` only
-        # when the harness lets the agent define metrics.
-        query_metrics.__annotations__['query'] = MetricFlowQueryWithSteps if steps else MetricFlowQuery
-        if not can_define:
-            signature = inspect.signature(query_metrics)
-            query_metrics.__signature__ = signature.replace(parameters=[signature.parameters['query']])
-            query_metrics.__doc__ = query_metrics.__doc__.split('`define`')[0].rstrip()
-        agent.tool_plain(query_metrics)
+            return compile_and_run(key, {'query': query, 'metric_definitions': list(definitions)}, query)
+    elif context == 'metricflow':
+        @agent.tool_plain
+        def query_metrics(query: MetricFlowQuery) -> dict | str:
+            """Compile a MetricFlow query to SQL, run it, and return the columns, rows (capped) and total row count."""
+            return compile_and_run(_query_key(query.model_dump()), {'query': query}, query)
     elif context == 'malloy':
         @agent.tool_plain
         async def run_malloy(query: str) -> dict | str:
@@ -673,7 +574,7 @@ def build_agent(
             if _SEMANTIC_SCHEMA.search(sql):
                 return 'ERROR: the semantic schema is not available; query the warehouse tables from list_tables.'
             result = run_query(_query_key(sql.strip()), {'sql': sql}, sql)
-            if (isinstance(result, dict) and 'raw_deprecations' in harness
+            if (isinstance(result, dict) and harness
                     and (deprecated := _deprecated_tables(_tables_and_columns(sql)[0]))):
                 result = {'warning': 'Deprecated tables: ' + '; '.join(f'{t}: {d}' for t, d in deprecated.items()), **result}
             return result

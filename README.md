@@ -24,18 +24,18 @@ It also has traps: look-alike tables, a deprecated mart, cancelled orders, mixed
 | dbt MetricFlow | Queries governed metrics from `dbt/`, and can define derived metrics from them | `query_metrics` |
 | Malloy | Writes Malloy against `app/malloy/warehouse.malloy`, which has the same definitions as dbt | `run_malloy` |
 
-**The harness** adds *process*, never business knowledge. The **Harness** tab shows exactly what each agent sees.
+**The harness** adds *process*, never business knowledge. It's one fixed set, on or off. The **Harness** tab shows exactly what each agent sees.
 
 | Applies to | What it adds |
 |---|---|
-| Every target | Prompt caching, answer review, an output check, cite-the-run answers, lean tool results |
+| Every target | Prompt caching, a tool guardrail, answer review, an output check, an answer checklist, cite-the-run answers, lean tool results |
 | Raw SQL | Deprecated-table lint, column docs for the reviewer |
 | dbt MetricFlow | A compact catalog, inline metric definitions, result steps (top-N, share of total) |
 | Malloy | A flat-output check |
 
 ## Results so far
 
-Sonnet 5.5 on 22 questions, harness on:
+Sonnet 5.5 on 22 questions, harness on. These runs were graded by rows match *and* an LLM judge, which has since been removed:
 
 | Target | Runs | Tokens per run | Pass |
 |---|---|---|---|
@@ -50,26 +50,26 @@ Both semantic layers can express every question (`uv run python -m app.expressib
 
 | Measure | What it means |
 |---|---|
-| Pass | The query runs, the rows match the reference (order-insensitive, numbers within 0.5%), and the LLM judge agrees |
+| Pass | The final query runs and its rows match the reference SQL (order-insensitive, numbers within 0.5%) |
 | pass^k | Share of questions passed in *every* run. Use Runs ≥ 3: one question moves the score 4.5 points |
-| Net value | Accuracy against token cost at list prices (`app/pricing.py`), with a Pareto frontier and bootstrap intervals |
-| Judge agreement | Cohen's κ between the judge and your own labels from the Labels tab |
+| Cost | The agent's tokens (reviewer included) at list prices (`app/pricing.py`), per question |
 
-**Held-out set (10 questions):** written before tuning, so don't tune against it.
+**Questions:** `app/questions.py`. The held-out set (10 questions) was written before tuning, so don't tune against it.
 
 ## Run it
 
 ```bash
 uv sync
 (cd malloy && npm ci)   # Malloy compiler, Node 18+
+export ANTHROPIC_API_KEY=sk-ant-...
 uv run uvicorn app.main:app --reload --reload-dir app --reload-dir static
-# open http://localhost:8000 and enter an Anthropic API key
+# open http://localhost:8000
 ```
 
 | Task | Command or setting |
 |---|---|
-| Benchmark from the command line | `uv run python -m app.bench --runs 3` (needs `ANTHROPIC_API_KEY`) |
-| Check every question is expressible | `uv run python -m app.expressibility` |
+| Benchmark from the command line | `uv run python -m app.bench --harness on off --runs 3` |
+| Check every question is expressible, and that MetricFlow and Malloy agree on every metric | `uv run python -m app.expressibility` |
 | Rebuild the warehouse | `uv run python -m app.db` (it also rebuilds itself when its SQL changes) |
 | Use an MLflow server | `MLFLOW_TRACKING_URI` (default: `data/mlflow.db`) |
 | Turn off tracking | `EVAL_MLFLOW=off` |
@@ -78,12 +78,8 @@ uv run uvicorn app.main:app --reload --reload-dir app --reload-dir static
 |---|---|
 | Run | Launch a matrix and compare cells live |
 | History | Reopen and compare past matrices |
-| Traces | Inspect each model and tool call |
-| Labels | Grade answers yourself to check the judge |
 | Harness | See each agent's prompt, tools and checks |
-| MLflow ↗ | Open MLflow's own UI at `/mlflow` |
-
-Your API key is sent with each request and never logged or stored, unless you tick "remember".
+| MLflow ↗ | Inspect traces (each model and tool call) in MLflow's own UI at `/mlflow` |
 
 ## Where things live
 
@@ -93,7 +89,8 @@ Your API key is sent with each request and never logged or stored, unless you ti
 | `dbt/`, `app/metricflow_bridge.py` | MetricFlow project and compiler |
 | `app/malloy/`, `app/malloy_bridge.py`, `malloy/` | Malloy model and compiler |
 | `app/agent.py` | Agents and harness |
-| `app/evals.py` | Questions, graders, reports |
+| `app/questions.py` | Questions and reference SQL |
+| `app/evals.py` | Running and grading a question set, and running a matrix (UI and CLI) |
 | `app/tracking.py`, `app/history.py` | MLflow recording and read API |
 | `app/main.py` | FastAPI server |
 | `static/` | UI (ES modules, no build). Design tokens in `static/css/tokens.css` |

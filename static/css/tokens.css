@@ -1,11 +1,9 @@
-/* Design tokens for the eval playground.
+/* Design tokens for Semantic Layer Bench.
  *
  * Interface colors are space-separated RGB channels so Tailwind can apply alpha (bg-accent/10); the
  * Tailwind config in index.html maps them to class names (bg-surface, text-ink-muted, border-border, ...).
- * Chart colors are plain hex: the categorical series were validated (scripts/validate_palette.js) against
- * these surfaces in both modes; keep them in this order, and re-run the validator if you change them.
  *
- * Dark mode is its own set of steps, not an inversion. It follows the OS unless <html data-theme> pins it.
+ * Dark mode is its own set of steps, not an inversion. It follows the OS.
  */
 
 :root {
@@ -39,21 +37,10 @@
   --radius-panel: 10px;
   --font-sans: 'Instrument Sans', ui-sans-serif, system-ui, sans-serif;
   --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
-
-  /* Charts (validated categorical slots: one per model, fixed order) */
-  --surface-1: rgb(var(--surface));
-  --text-primary: rgb(var(--ink));
-  --text-secondary: rgb(var(--ink-muted));
-  --text-muted: rgb(var(--ink-subtle));
-  --grid: #e6e8e3;
-  --frontier: #565e5a;
-  --series-1: #2a78d6;
-  --series-2: #eb6834;
-  --series-3: #1baf7a;
 }
 
 @media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
+  :root {
     color-scheme: dark;
     --bg: 17 21 19;
     --surface: 25 30 28;
@@ -75,41 +62,7 @@
     --warning-soft: 58 42 18;
     --code-bg: 12 15 14;
     --code-fg: 220 226 222;
-    --grid: #2c3330;
-    --frontier: #a7b0ab;
-    --series-1: #3987e5;
-    --series-2: #d95926;
-    --series-3: #199e70;
   }
-}
-
-:root[data-theme="dark"] {
-  color-scheme: dark;
-  --bg: 17 21 19;
-  --surface: 25 30 28;
-  --surface-2: 34 40 37;
-  --border: 46 54 50;
-  --border-strong: 70 79 74;
-  --ink: 231 235 232;
-  --ink-muted: 167 176 171;
-  --ink-subtle: 128 137 132;
-  --accent: 92 195 214;
-  --accent-hover: 132 212 226;
-  --accent-fg: 8 30 35;
-  --accent-soft: 21 51 57;
-  --success: 102 199 145;
-  --success-soft: 22 51 36;
-  --danger: 240 132 122;
-  --danger-soft: 64 28 26;
-  --warning: 228 176 92;
-  --warning-soft: 58 42 18;
-  --code-bg: 12 15 14;
-  --code-fg: 220 226 222;
-  --grid: #2c3330;
-  --frontier: #a7b0ab;
-  --series-1: #3987e5;
-  --series-2: #d95926;
-  --series-3: #199e70;
 }
 
 html { background: rgb(var(--bg)); }

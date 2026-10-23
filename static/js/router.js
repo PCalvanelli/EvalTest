@@ -1,8 +1,7 @@
 // Hash router: #/<view>?<params>. Views register a show(params) function; go() switches synchronously, so a
-// caller can render into a view right after switching to it (charts need the view visible to measure width).
+// caller can render into a view right after switching to it.
 
 const views = {};
-let current = null;
 
 export const register = (name, show) => { views[name] = show; };
 export const parse = () => {
@@ -17,9 +16,7 @@ export function route() {
     if (a.dataset.tab === name) a.setAttribute('aria-current', 'page');
     else a.removeAttribute('aria-current');
   }
-  const changedView = name !== current;
-  current = name;
-  views[name](params, {changedView});
+  views[name](params);
 }
 
 /** Navigate without waiting for the hashchange event. */

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import itertools
 import json
 import shutil
 from pathlib import Path
@@ -27,7 +26,6 @@ class _Sidecar:
         self.proc: asyncio.subprocess.Process | None = None
         self.loop: asyncio.AbstractEventLoop | None = None
         self.lock: asyncio.Lock | None = None
-        self.ids = itertools.count()
 
     async def _start(self) -> None:
         if not (ROOT / 'malloy' / 'node_modules').exists():
@@ -40,7 +38,7 @@ class _Sidecar:
             stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
             limit=16 * 1024 * 1024,
         )
-        reply = await self._request({'type': 'init', 'ddl': db.schema_ddl('marts'), 'model': MODEL_TEXT})
+        reply = await self._request({'init': True, 'ddl': db.schema_ddl('marts'), 'model': MODEL_TEXT})
         if 'error' in reply:
             self.proc.kill()
             self.proc = None
@@ -63,7 +61,7 @@ class _Sidecar:
                 await self._start()
         assert self.lock is not None
         async with self.lock:
-            reply = await self._request({'id': next(self.ids), 'query': query})
+            reply = await self._request({'query': query})
         if 'error' in reply:
             raise MalloyError(reply['error'])
         return reply['sql']
@@ -76,5 +74,3 @@ async def compile(query: str) -> str:
     """Compile a Malloy query (run: ... statement) against the warehouse model; raises MalloyError."""
     return await _sidecar.compile(query)
 
-
-# Parity with the gold answers and with dbt MetricFlow: `uv run python -m app.metricflow_bridge`.

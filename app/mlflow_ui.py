@@ -1,4 +1,4 @@
-"""MLflow's own UI, served by the playground at /mlflow from the local tracking store, so there is no second server.
+"""MLflow's own UI, served by the app at /mlflow from the local tracking store, so there is no second server.
 
 MLflow's server reads its store, artifact root and URL prefix from environment variables when `mlflow.server`
 is first imported, so they are set just before that import. Mount the returned app LAST: it answers every path
