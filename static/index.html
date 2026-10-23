@@ -57,7 +57,7 @@
       .badge-neutral { @apply bg-surface-2 text-ink-muted; }
       .badge-warn { @apply bg-warning-soft text-warning; }
       .tab { @apply border-b border-transparent px-1 py-1 text-sm text-ink-muted hover:text-ink; }
-      .tab[aria-current="page"] { @apply border-ink font-medium text-ink; }
+      .tab[aria-current="page"], .tab[aria-selected="true"] { @apply border-ink font-medium text-ink; }
       .stat { @apply rounded-control bg-surface-2 px-3 py-2; }
       .stat-label { @apply text-xs text-ink-muted; }
       .stat-value { @apply text-lg font-semibold tabular-nums text-ink; }
@@ -124,10 +124,16 @@
   <div id="status" class="notice notice-info mt-3 hidden" role="status"></div>
 
   <!-- Results. Shared with History, which moves this block into #pastRun to show a past run. -->
-  <main id="results" class="min-w-0 space-y-5 pt-5">
+  <main id="results" class="min-w-0 pt-5">
+    <nav id="resultTabs" class="mb-4 hidden gap-5 border-b border-border" role="tablist" aria-label="Results">
+      <button type="button" class="tab -mb-px pb-2" role="tab" data-pane="overview">Pass rate</button>
+      <button type="button" class="tab -mb-px pb-2" role="tab" data-pane="questions">By question</button>
+      <button type="button" class="tab -mb-px pb-2" role="tab" data-pane="detail">Answers</button>
+    </nav>
+    <div data-pane="overview" role="tabpanel">
     <section id="matrixWrap" class="panel hidden p-4">
       <div class="mb-1 flex flex-wrap items-baseline justify-between gap-3">
-        <h2 class="panel-title">Pass rate</h2>
+        <p class="hint">Pass rate per setup. Open one to see its answers.</p>
         <div class="flex items-center gap-3 text-xs">
           <a id="mlflowLink" target="_blank" rel="noopener" class="hidden text-ink-muted hover:text-ink"
              title="Open this run in MLflow">in MLflow ↗</a>
@@ -140,11 +146,15 @@
       </details>
       <div class="overflow-x-auto"><table id="matrix" class="w-full border-separate border-spacing-1.5 text-sm"></table></div>
     </section>
+    </div>
+    <div data-pane="questions" role="tabpanel" hidden>
     <section id="perPromptWrap" class="panel hidden p-4">
-      <h2 class="panel-title mb-3">By question</h2>
       <div class="overflow-x-auto"><table id="perPrompt" class="data-table w-full text-xs"></table></div>
     </section>
+    </div>
+    <div data-pane="detail" role="tabpanel" hidden>
     <div id="detail"></div>
+    </div>
     <div id="empty" class="empty">
       Pick models, harness and targets, then press Run. Results fill in as each setup finishes.
       Past runs are in <a class="link" href="#/history">History</a>.
