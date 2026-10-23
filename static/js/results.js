@@ -252,7 +252,7 @@ function renderPerPrompt() {
   const {state} = app;
   const {models, combos} = planDims();
   const cols = models.flatMap((m) => combos.map((c) => ({id: cellId(m, c.harness, c.context), m, c})));
-  const head = `<tr><th>Question</th>${cols.map(({m, c}) =>
+  const head = `<tr><th>Prompt</th>${cols.map(({m, c}) =>
     `<th class="whitespace-nowrap !text-center">${esc(modelName(m))}<br><span class="font-normal">${comboLabel(c)}</span></th>`).join('')}</tr>`;
   const rows = state.prompts.map((p, i) => `<tr>
     <td class="max-w-[280px]">${esc(p)}</td>
@@ -307,7 +307,7 @@ function renderRunSummary(id, rs, activeRun) {
       ${stat('Average time', fmtS(a.seconds))}
       ${stat('Average tokens', Math.round(a.tokens).toLocaleString())}
     </div>
-    ${a.flaky.length ? `<p class="mb-3 rounded-control bg-warning-soft p-2 text-xs"><span class="font-semibold">Flaky questions</span> (passed in some repeats, not all): ${a.flaky.map((i) => esc(state.prompts[i])).join(' · ')}</p>` : ''}
+    ${a.flaky.length ? `<p class="mb-3 rounded-control bg-warning-soft p-2 text-xs"><span class="font-semibold">Flaky prompts</span> (passed in some repeats, not all): ${a.flaky.map((i) => esc(state.prompts[i])).join(' · ')}</p>` : ''}
     <div class="flex flex-wrap gap-2">${tabs}</div>
   </section>`;
 }
@@ -326,14 +326,14 @@ function renderReport(r) {
     <div class="mt-3 grid grid-cols-2 gap-2 md:grid-cols-4">
       ${stat('Pass rate', `${pct(r.pass_rate)} <span class="text-sm font-normal text-ink-muted">(${r.passed}/${r.total})</span>` +
         (r.infra_errors ? `<span class="block text-xs font-normal text-warning">${r.infra_errors} infra error${r.infra_errors > 1 ? 's' : ''} not scored</span>` : ''))}
-      ${r.cost_usd != null ? stat('Cost', `${fmtUSD(r.cost_usd)} <span class="text-sm font-normal text-ink-muted">(${fmtUSD(r.cost_usd / Math.max(r.total, 1))} / question)</span>`) : ''}
+      ${r.cost_usd != null ? stat('Cost', `${fmtUSD(r.cost_usd)} <span class="text-sm font-normal text-ink-muted">(${fmtUSD(r.cost_usd / Math.max(r.total, 1))} / prompt)</span>`) : ''}
       ${stat('Time', fmtS(r.total_seconds))}
       ${stat('Tokens', (r.total_tokens ?? 0).toLocaleString())}
     </div>
     <details class="mb-4 mt-2">
       <summary class="cursor-pointer select-none text-xs text-ink-muted hover:text-ink">More stats</summary>
       <div class="mt-2 grid grid-cols-2 gap-2 md:grid-cols-6">
-        ${stat('Per question', fmtS(r.avg_case_seconds))}
+        ${stat('Per prompt', fmtS(r.avg_case_seconds))}
         ${caseStats(r)}
         ${r.cache_read_tokens ? stat('Input cached', pct(r.cache_read_tokens / Math.max(r.input_tokens, 1))) : ''}
         ${stat('Requests', r.requests)}

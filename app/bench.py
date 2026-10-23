@@ -22,7 +22,7 @@ from .questions import QUESTION_SETS
 async def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('--model', default='claude-sonnet-5-5')
-    parser.add_argument('--contexts', nargs='+', default=['metricflow', 'malloy'], choices=['raw', 'metricflow', 'malloy'])
+    parser.add_argument('--contexts', nargs='+', default=['metricflow', 'malloy'], choices=['raw', 'glossary', 'metricflow', 'malloy'])
     parser.add_argument('--harness', nargs='+', choices=['on', 'off'], default=['on'])
     parser.add_argument('--set', default='benchmark', choices=list(QUESTION_SETS))
     parser.add_argument('--cases', help='Comma-separated question ids (b13) or 1-based numbers (default: all).')

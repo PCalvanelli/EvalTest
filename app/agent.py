@@ -6,6 +6,7 @@ import asyncio
 import json
 import re
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Literal
 
 from anthropic import AsyncAnthropic
@@ -51,6 +52,14 @@ across several schemas). The schema is not given to you up front. Use the tools:
 - `describe_table(table)`: columns, types, column documentation and a few sample rows.
 - `run_sql(sql)`: run a read-only query; returns up to {db.MAX_ROWS} rows.
 Always use schema-qualified table names (schema.table). Return the final query and a short explanation.
+"""
+
+# The glossary target's addition to the raw-SQL instructions: the business definitions in plain words, with no table
+# or column names, so the agent still finds the data itself.
+GLOSSARY_INSTRUCTIONS = f"""
+<business_glossary>
+{(Path(__file__).parent / 'glossary.md').read_text()}</business_glossary>
+Use these definitions for the business terms in the question.
 """
 
 # The semantic layer's private views (app/warehouse/04_semantic.sql) are off limits to the raw-SQL agent.
@@ -188,6 +197,7 @@ REVIEW_TARGET_RULES = {
 4. Calculations across periods: is any where-filter applied in the same stage as a calculation that needs earlier
    periods (a filter to 2025 removes December 2024, so January has no prior month)?""",
 }
+REVIEW_TARGET_RULES['glossary'] = REVIEW_TARGET_RULES['raw']
 
 
 class Review(BaseModel):
@@ -336,7 +346,7 @@ def _final_answer_guard(context: Context, reviewer: AnthropicModel, log: Harness
             return GuardrailResult.retry(lint)
         if log.reviews < MAX_REVIEWS:
             log.reviews += 1
-            docs = _column_docs(sql) if context == 'raw' else ''
+            docs = _column_docs(sql) if context in RAW_CONTEXTS else ''
             instructions = REVIEW_INSTRUCTIONS.format(target_rules=REVIEW_TARGET_RULES[context])
             verdict = await Agent(reviewer, output_type=Review, instructions=instructions).run(
                 f'Question:\n{ctx.prompt}\n\n{_answer_text(output, sql)}\n\nExplanation:\n{output.explanation}\n\n'
@@ -362,7 +372,7 @@ def _target_lint(context: Context, output: object, sql: str, rows: list, log: Ha
     if log.lint_retries >= MAX_LINT_RETRIES:
         return None
     message = None
-    if context == 'raw' and isinstance(output, SQLAnswer):
+    if context in RAW_CONTEXTS and isinstance(output, SQLAnswer):
         if deprecated := _deprecated_tables(_tables_and_columns(sql)[0]):
             message = 'Your final query reads tables the warehouse documents as deprecated:\n' + '\n'.join(
                 f'- {t}: {doc}' for t, doc in deprecated.items()) + '\nUse the current tables instead.'
@@ -375,13 +385,19 @@ def _target_lint(context: Context, output: object, sql: str, rows: list, log: Ha
     return message
 
 
-Context = Literal['raw', 'metricflow', 'malloy']
-TOOLS = {'raw': 'run_sql', 'metricflow': 'query_metrics', 'malloy': 'run_malloy'}  # each target's query tool
+Context = Literal['raw', 'glossary', 'metricflow', 'malloy']
+RAW_CONTEXTS = ('raw', 'glossary')  # the targets that write SQL against the warehouse tables
+TOOLS = {'raw': 'run_sql', 'glossary': 'run_sql', 'metricflow': 'query_metrics', 'malloy': 'run_malloy'}  # each target's query tool
 # What each context gives the agent, in display order. The UI takes target names and tooltips from here.
 CONTEXTS: dict[str, dict[str, str]] = {
     'raw': {
         'name': 'Raw SQL',
         'summary': 'No business context. The agent explores the warehouse and decides what business terms mean itself.',
+    },
+    'glossary': {
+        'name': 'Raw SQL + glossary',
+        'summary': 'Raw SQL plus a short business glossary: what each metric means in plain words, but not which '
+                   'tables or columns hold it.',
     },
     'metricflow': {
         'name': 'dbt MetricFlow',
@@ -451,7 +467,10 @@ def instruction_parts(context: Context, harness: bool) -> list[dict]:
     the Harness view shows them apart."""
     tool = TOOLS[context]
     parts = [{'harness': False, 'title': 'Base instructions',
-              'text': {'raw': INSTRUCTIONS, 'metricflow': METRICFLOW_INSTRUCTIONS, 'malloy': MALLOY_INSTRUCTIONS}[context]}]
+              'text': {'raw': INSTRUCTIONS, 'glossary': INSTRUCTIONS, 'metricflow': METRICFLOW_INSTRUCTIONS,
+                       'malloy': MALLOY_INSTRUCTIONS}[context]}]
+    if context == 'glossary':
+        parts.append({'harness': False, 'title': 'Business glossary', 'text': GLOSSARY_INSTRUCTIONS})
     if context == 'metricflow':
         if harness:
             parts += [{'harness': True, 'title': 'Defining metrics', 'text': DEFINE_METRIC_INSTRUCTIONS},
@@ -483,11 +502,11 @@ def build_agent(
     definitions: list[MetricDefinition] = []  # metrics this case defined in query_metrics
     runs = QueryRuns()
     tool = TOOLS[context]
-    answer_type = {'raw': SQLAnswer, 'metricflow': MetricFlowAnswerPlus if harness else MetricFlowAnswer,
+    answer_type = {'raw': SQLAnswer, 'glossary': SQLAnswer, 'metricflow': MetricFlowAnswerPlus if harness else MetricFlowAnswer,
                    'malloy': MalloyAnswer}[context]
     capabilities = []
     if harness:
-        guard = {'raw': _block_writes, 'metricflow': _block_uncompilable_metricflow(definitions),
+        guard = {'raw': _block_writes, 'glossary': _block_writes, 'metricflow': _block_uncompilable_metricflow(definitions),
                  'malloy': _block_uncompilable_malloy}[context]
         reviewer = make_model(model_name, api_key)
         capabilities = [ToolGuardrail(guard=guard, tools=[tool]),
@@ -519,7 +538,7 @@ def build_agent(
             return f'ERROR (run {n}): {error}' if harness else f'ERROR: {error}'
         if harness:
             return {'run': n, **result}
-        return {'sql': sql, **result} if context != 'raw' else result
+        return {'sql': sql, **result} if context not in RAW_CONTEXTS else result
 
     def compile_and_run(key: str, fields: dict, query: MetricFlowQuery) -> dict | str:
         try:
