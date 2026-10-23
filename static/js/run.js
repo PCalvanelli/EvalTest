@@ -2,7 +2,7 @@
 // in it; the Run tab only ever shows the latest run started here.
 
 import {$, $$, esc} from './ui.js';
-import {app, freshState, MODELS} from './config.js';
+import {app, freshState, models} from './config.js';
 import {postJSON, readNdjson} from './api.js';
 import {renderAll, renderProgress, renderRunTimes, selectCell} from './results.js';
 
@@ -31,14 +31,24 @@ function showStatus(msg, kind = 'info') {
   el.textContent = msg;
 }
 
+/** The model chips, from the settings. Re-run after Settings saves; choices still on offer stay as picked. */
+export function renderModelChoices() {
+  const picked = new Set(checkedValues('model'));
+  const keep = picked.size > 0;
+  $('#modelChoices').innerHTML = models().map((m) => chip('model', m.id, m.name, keep ? picked.has(m.id) : m.checked)).join('');
+  $$('input[name=model]').forEach((i) => i.onchange = updateCount);
+  if (keep && !checkedValues('model').length) $$('input[name=model]')[0].checked = true;
+  updateCount();
+}
+
 export function initRun(cfg) {
-  $('#modelChoices').innerHTML = MODELS.map((m) => chip('model', m.id, m.name, m.checked)).join('');
+  renderModelChoices();
   $('#harnessChoices').innerHTML = chip('harness', 'false', 'Baseline', true, 'The model with only the target’s query tools: nothing guiding or checking it') + chip('harness', 'true', 'Harness', true, 'The baseline plus the harness: extra guidance, query and answer checks, a reviewer, more retries');
   $('#contextChoices').innerHTML = Object.entries(cfg.contexts)
     .map(([id, c]) => chip('context', id, c.name, true, c.summary)).join('');
   $('#questionSet').innerHTML = Object.entries(cfg.question_sets).map(([name, n]) =>
     `<option value="${esc(name)}">${name === 'holdout' ? 'Held-out' : 'Benchmark'} (${n} prompts)</option>`).join('');
-  $$('input[name=model], input[name=harness], input[name=context]').forEach((i) => i.onchange = updateCount);
+  $$('input[name=harness], input[name=context]').forEach((i) => i.onchange = updateCount);
   $('#repeats').oninput = updateCount;
   $('#questionSet').onchange = updateCount;
   updateCount();

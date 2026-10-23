@@ -95,7 +95,7 @@ function costCell(m) {
   const total = costed.reduce((sum, c) =>
     sum + c.metrics.mean_cost_per_question_usd * (+m.params.prompts || 0) * (c.metrics.runs_completed ?? 1), 0);
   const partial = costed.length < m.cells.length || m.status !== 'FINISHED';
-  const title = partial ? 'Completed repeats only; work cut short is not counted' : 'At list prices (app/pricing.py)';
+  const title = partial ? 'Completed repeats only; work cut short is not counted' : 'At the model prices in Settings';
   return `<td class="whitespace-nowrap text-right tabular-nums" title="${title}">${partial ? '≥ ' : ''}${fmtUSD(total)}</td>`;
 }
 

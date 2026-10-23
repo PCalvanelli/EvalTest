@@ -1,11 +1,8 @@
 // Constants shared across views, plus the single mutable app state object.
 
-export const MODELS = [
-  {id: 'claude-opus-5-5', name: 'Opus 5.5'},
-  {id: 'claude-sonnet-5-5', name: 'Sonnet 5.5', checked: true},
-  {id: 'claude-haiku-5-5', name: 'Haiku 5.5'},
-];
-export const modelName = (id) => MODELS.find((m) => m.id === id)?.name ?? id;
+// Models on offer come from the server's settings (/api/config); a past run's model that's no longer listed shows its id.
+export const models = () => app.config.models;
+export const modelName = (id) => models().find((m) => m.id === id)?.name ?? id;
 // Targets come from the server (/api/config), in its order.
 export const contextIds = () => Object.keys(app.config.contexts);
 export const contextName = (id) => app.config.contexts[id]?.name ?? id;
