@@ -21,8 +21,9 @@ export function cellLabel(id) {
 //   prompts: question texts, in case order
 //   mlflow: {matrix, cells: {cellId: url}} when tracked
 //   runSeconds: {runNo: wall-clock seconds}, totalSeconds: the whole matrix, once finished
+//   tab: the results tab on show (overview, questions or detail)
 // progress[run][cellId] = {active: Set of question indexes holding an agent slot, done: {index: passed}}; only a live
 // run fills it.
 export const freshState = (extra = {}) => ({cells: [], repeats: 1, runs: {}, errors: {}, prompts: [], selected: null,
-  selectedRun: null, mlflow: null, runSeconds: {}, totalSeconds: null, progress: {}, ...extra});
+  selectedRun: null, tab: 'overview', mlflow: null, runSeconds: {}, totalSeconds: null, progress: {}, ...extra});
 export const app = {state: freshState(), config: null};

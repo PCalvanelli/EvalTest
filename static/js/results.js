@@ -2,7 +2,7 @@
 // matrix and one loaded from History (both fill app.state).
 
 import {$, $$, esc, mean, fmtS, fmtDur, pct, fmtUSD, passTint, spinner, stat, passBadge} from './ui.js';
-import {app, contextIds, cellId, modelName, comboLabel} from './config.js';
+import {app, contextIds, contextName, cellId, modelName, comboLabel} from './config.js';
 
 // All finished reports for a cell, in run order.
 const reportsFor = (id) => Object.keys(app.state.runs).map(Number).sort((a, b) => a - b)
@@ -59,11 +59,21 @@ export function renderRunTimes() {
   el.classList.toggle('hidden', !parts.length);
 }
 
+/** Show one results tab: overview (pass rate), questions or detail (the selected setup's answers). */
+export function showTab(name) {
+  app.state.tab = name;
+  $$('#resultTabs [data-pane]').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.pane === name)));
+  $$('#results > [data-pane]').forEach((p) => p.hidden = p.dataset.pane !== name);
+}
+
 /** Re-render everything that depends on app.state (after an event, a load, or a scoring change). */
 export function renderAll() {
   const {state} = app;
   if (!state.cells.length) return;
   $('#empty').classList.add('hidden');
+  $('#resultTabs').classList.replace('hidden', 'flex');
+  $$('#resultTabs [data-pane]').forEach((b) => b.onclick = () => showTab(b.dataset.pane));
+  showTab(state.tab);
   renderMatrix();
   renderRunTimes();
   renderPerPrompt();
@@ -95,17 +105,21 @@ function liveCell(id) {
 function renderMatrix() {
   const {state} = app;
   const {models, combos} = planDims();
-  const head = `<tr><th></th>${combos.map((c) =>
-    `<th class="px-1 pb-1 text-left text-xs font-medium text-ink-muted">${comboLabel(c)}</th>`).join('')}</tr>`;
+  // Two header rows: each target over its baseline / harness columns. Columns share the width equally.
+  const targets = [...new Set(combos.map((c) => c.context))];
+  const head = `<tr><th class="w-px"></th>${targets.map((t) =>
+    `<th colspan="${combos.filter((c) => c.context === t).length}" class="border-b border-border px-1 pb-1 text-left text-xs font-medium text-ink">${esc(contextName(t))}</th>`).join('')}</tr>
+    <tr><th class="w-px"></th>${combos.map((c) =>
+    `<th style="width:${100 / combos.length}%" class="px-1 text-left text-xs font-normal text-ink-muted">${c.harness ? 'Harness' : 'Baseline'}</th>`).join('')}</tr>`;
   const rows = models.map((m) => `<tr>
-    <th class="whitespace-nowrap pr-3 text-left text-sm font-medium">${esc(modelName(m))}</th>
+    <th class="w-px whitespace-nowrap pr-3 text-left text-sm font-medium">${esc(modelName(m))}</th>
     ${combos.map((c) => renderCell(cellId(m, c.harness, c.context))).join('')}
   </tr>`).join('');
   $('#matrix').innerHTML = head + rows;
   $('#matrixWrap').classList.remove('hidden');
   $('#mlflowLink').classList.toggle('hidden', !state.mlflow?.matrix);
   if (state.mlflow?.matrix) $('#mlflowLink').href = state.mlflow.matrix;
-  $$('#matrix [data-cell]').forEach((b) => b.onclick = () => selectCell(b.dataset.cell));
+  $$('#matrix [data-cell]').forEach((b) => b.onclick = () => { selectCell(b.dataset.cell); showTab('detail'); });
 }
 
 function renderCell(id) {
@@ -117,10 +131,10 @@ function renderCell(id) {
   if (!a) {
     if (err) return `<td class="align-top"><div class="rounded-control border border-danger/30 bg-danger-soft p-3 text-xs">${err}</div></td>`;
     if (!live) {
-      return `<td class="align-top"><div class="flex min-h-[92px] min-w-[150px] items-center rounded-control border border-dashed border-border p-3 text-xs text-ink-subtle"
+      return `<td class="h-px align-top"><div class="flex h-full min-h-[92px] min-w-[104px] items-center rounded-control border border-dashed border-border p-3 text-xs text-ink-subtle"
         title="Waiting for an agent slot">Waiting</div></td>`;
     }
-    return `<td class="align-top"><div class="min-h-[92px] min-w-[150px] rounded-control border border-dashed border-border-strong p-3 text-xs text-ink-muted">
+    return `<td class="h-px align-top"><div class="h-full min-h-[92px] min-w-[104px] rounded-control border border-dashed border-border-strong p-3 text-xs text-ink-muted">
       <div class="flex items-center gap-2 font-medium text-ink">${spinner}Running…</div>
       <div class="mt-1.5 tabular-nums">${live.answered}</div>
       ${live.soFar ? `<div class="tabular-nums text-ink-subtle">${live.soFar}</div>` : ''}
@@ -128,18 +142,18 @@ function renderCell(id) {
     </div></td>`;
   }
   const multi = state.repeats > 1;
-  const money = a.cost != null ? `<div class="text-xs tabular-nums text-ink-muted" title="Average cost per question at list prices">${fmtUSD(a.cost)} / question</div>` : '';
-  const runs = multi ? `<div class="mt-0.5 text-xs tabular-nums"><span class="font-semibold" title="Share of questions that passed in every repeat">${pct(a.pass_k)} always passed</span>` +
-    `${a.flaky.length ? ` · <span class="text-warning">${a.flaky.length} flaky</span>` : ''}</div>` +
+  const money = a.cost != null ? `<div class="whitespace-nowrap text-xs tabular-nums text-ink-muted" title="Average cost per question at list prices">${fmtUSD(a.cost)} / question</div>` : '';
+  const runs = multi ? `<div class="mt-0.5 text-xs font-semibold tabular-nums" title="Share of questions that passed in every repeat">${pct(a.pass_k)} always passed</div>` +
+    (a.flaky.length ? `<div class="text-xs tabular-nums text-warning" title="Passed in some repeats, not all">${a.flaky.length} flaky</div>` : '') +
     (a.n < state.repeats ? `<div class="flex items-center gap-1 text-[11px] text-ink-muted">${spinner}${a.n}/${state.repeats} repeats${live ? ` · ${live.answered}` : ''}</div>` : '') : '';
   const details = [multi && a.n > 1 ? `${pct(a.min)}–${pct(a.max)} across repeats (average shown)` : '',
     `${fmtS(a.seconds)} · ${Math.round(a.tokens).toLocaleString()} tokens · ${+a.tool_calls.toFixed(1)} tool calls`].filter(Boolean).join('\n');
   const first = reportsFor(id)[0];
   const counts = multi ? '' : ` <span class="text-xs font-normal text-ink-muted">${first.passed}/${first.total}</span>`;
-  return `<td class="align-top"><button type="button" data-cell="${esc(id)}" aria-pressed="${selected}"
-    title="${esc(details)}" class="w-full min-w-[150px] rounded-control border p-3 text-left transition-colors hover:border-border-strong ${selected ? 'border-accent ring-2 ring-accent/40' : 'border-border'}"
+  return `<td class="h-px align-top"><button type="button" data-cell="${esc(id)}" aria-pressed="${selected}"
+    title="${esc(details)}" class="flex h-full w-full min-w-[104px] flex-col rounded-control border p-3 text-left transition-colors hover:border-border-strong ${selected ? 'border-accent ring-2 ring-accent/40' : 'border-border'}"
     style="background:${passTint(a.pass_rate)}">
-    <div class="whitespace-nowrap text-[26px] font-semibold leading-tight tracking-tight tabular-nums">${pct(a.pass_rate)}${counts}</div>
+    <div class="whitespace-nowrap text-2xl font-semibold leading-tight tracking-tight tabular-nums">${pct(a.pass_rate)}${counts}</div>
     ${money}${runs}${err}
   </button></td>`;
 }

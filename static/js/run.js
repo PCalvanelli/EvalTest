@@ -57,6 +57,7 @@ export function showResults(container, state) {
   app.state = state;
   $('#detail').innerHTML = '';
   for (const id of ['#matrixWrap', '#perPromptWrap']) $(id).classList.add('hidden');
+  $('#resultTabs').classList.replace('flex', 'hidden');
   $('#empty').classList.toggle('hidden', state.cells.length > 0);
   renderAll();
 }
