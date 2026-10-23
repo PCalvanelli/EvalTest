@@ -107,8 +107,8 @@
         <div id="contextChoices" class="flex flex-wrap gap-1.5"></div>
       </fieldset>
       <label class="flex flex-col">
-        <span class="group-label">Questions</span>
-        <select id="questionSet" class="input mt-0 w-auto py-1.5"></select>
+        <span class="group-label">Prompt set</span>
+        <select id="questionSet" class="input mt-0 w-auto py-1.5" title="The batch of prompts every setup answers"></select>
       </label>
       <label class="flex flex-col">
         <span class="group-label">Repeats</span>
@@ -183,7 +183,7 @@
 <div id="view-harness" class="view mx-auto max-w-[1500px] p-4 lg:p-6" hidden>
   <div class="mb-4">
     <h1 class="text-xl font-semibold tracking-tight">Harness</h1>
-    <p class="hint">How the agent answers a question, step by step: the baseline (the model with only the target’s query tools) vs. with the harness. Open any item to read it.</p>
+    <p class="hint">How the agent answers a prompt, step by step: the baseline (the model with only the target’s query tools) vs. with the harness. Open any item to read it.</p>
   </div>
   <div id="harnessControls" class="mb-4 flex flex-wrap items-center gap-x-6 gap-y-2"></div>
   <div id="harnessBody"></div>
