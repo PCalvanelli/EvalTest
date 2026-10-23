@@ -30,7 +30,7 @@ function pages() {
         ${table(['Step', 'What happens'], [
           ['<span class="whitespace-nowrap">1. Plan</span>', 'Every combination becomes a setup.'],
           ['2. Answer', 'Each setup answers every prompt in the prompt set. A fresh agent per prompt; six agents run at a time across the matrix.'],
-          ['3. Grade', 'The agent’s final query runs and its rows are compared with a reference SQL answer.'],
+          ['3. Grade', 'The agent’s final query runs and its rows are compared with the question’s frozen reference rows.'],
           ['4. Repeat', 'Repeats run the whole matrix again, one after another, to measure consistency.'],
           ['5. Record', `Reports, traces and costs are logged to ${ext('https://mlflow.org/', 'MLflow')}, so every run reopens in History.`],
         ])}`},
@@ -72,10 +72,44 @@ function pages() {
           ['Output checks', 'The final query must run and return data, and pass the target’s lints.'],
           ['Reviewer', 'A fresh agent checks the answer against the question and can send it back.'],
         ])}
-        ${p('The <a class="link" href="#/harness">Harness</a> tab shows all of it, step by step, for each target.')}`},
+        ${p('The <a class="link" href="#/harness">Harness</a> tab shows all of it, step by step, for each target. How it’s built: <a class="link" href="#/docs?s=evals" data-jump="evals">How the evals work</a>.')}`},
+      {id: 'evals', title: 'How the evals work', body: `
+        ${p('Every eval runs on four pieces, one job each.')}
+        ${table(['Piece', 'Its job here'], [
+          [ext('https://pydantic.dev/docs/ai/overview/', 'Pydantic AI'), 'Runs each agent: model calls, tools, a typed final answer, and the per-question limits (tool calls, tokens, timeout).'],
+          [ext('https://pydantic.dev/docs/ai/harness/', 'Pydantic AI Harness'), 'Supplies the harness’s checks as <em>capabilities</em> attached to the agent.'],
+          [`<span class="whitespace-nowrap">Our eval runner</span><span class="block text-xs text-ink-muted">${code('app/evals.py')} ${code('app/gold.py')}</span>`, 'Runs the grid of setups, grades each answer, repeats, and computes pass^k.'],
+          [ext('https://mlflow.org/', 'MLflow'), 'Records runs, metrics and traces, with each question’s pass/fail on its trace. History reads from it.'],
+        ])}
+        <h3 class="mt-6 text-base font-semibold">Pydantic AI Harness</h3>
+        ${p(`The official capability library for Pydantic AI. A capability is a self-contained piece of agent behavior, added to an agent with ${code('capabilities=[...]')}. The harness uses its two ${ext('https://pydantic.dev/docs/ai/harness/guardrails/', 'guardrails')}; the baseline uses neither.`)}
+        ${table(['Guardrail', 'Checks', 'On a problem'], [
+          [code('ToolGuardrail'), 'Each query before it runs. Raw SQL: one read-only SELECT. MetricFlow and Malloy: the query must compile.', 'The call is skipped and the refusal becomes the tool result, so the agent sees why and fixes it.'],
+          [code('OutputGuardrail'), 'The final answer, in order: the query runs (up to 2 retries), returns data (1), passes the target’s lints (1), then a reviewer agent checks it (up to 2 send-backs).', 'The answer goes back to the agent with the reason. Every step is capped, so a stubborn case ends with an answer on record, not a crash.'],
+        ])}
+        ${p('Prompt caching, cite-the-run and lean results are Pydantic AI settings and our own tool code, not Harness capabilities. The <a class="link" href="#/harness">Harness</a> tab lists every piece per target.')}
+        <h3 class="mt-6 text-base font-semibold">One question, start to finish</h3>
+        ${table(['Step', 'What happens'], [
+          ['1. Answer', 'A fresh agent gets the question, with the same caps in every setup: 15 tool calls, 250k tokens (agent and reviewer together), 180 s.'],
+          ['2. Grade', `Its final query runs on DuckDB. The rows are compared with the question’s frozen reference rows (${code('gold/gold.json')}): row order is ignored, numbers must be within 0.5%.`],
+          ['3. Outcome', '<strong>Pass</strong>; <strong>fail</strong> (wrong rows, over budget or timed out); or <strong>infra error</strong> (a provider or compiler outage, retried twice, then left out of the scores).'],
+          ['4. Record', 'MLflow stores the trace with its pass/fail, and the setup’s metrics.'],
+        ])}
+        <h3 class="mt-6 text-base font-semibold">Compared with Pydantic Evals</h3>
+        ${p(`${ext('https://pydantic.dev/docs/ai/evals/evals/', 'Pydantic Evals')} is Pydantic’s code-first framework for evaluating AI systems. Its terms map onto this app’s:`)}
+        ${table(['Pydantic Evals', 'Here'], [
+          ['Dataset', 'Prompt set (benchmark, held-out)'],
+          ['Case', 'Question: id, text, frozen reference rows, tags'],
+          ['Evaluator', 'The row comparison against the reference rows'],
+          [code('repeat'), 'Repeats'],
+          ['Experiment / report', 'One setup’s repeat / its report in History'],
+        ])}
+        ${p('We don’t use it today: it would replace only the grading step. Our runner also runs the setup grid on one shared concurrency limit, streams progress live, enforces equal budgets and leaves out infra errors, and MLflow already holds the results. We may use it, or MLflow’s own judges, for LLM-judged failure labels later.')}`},
       {id: 'scoring', title: 'Scoring', body: `
         ${table(['Measure', 'What it means'], [
-          ['Pass', 'The final query runs and its rows match the reference SQL (order-insensitive, numbers within 0.5%).'],
+          ['Pass', 'The final query runs and its rows match the question’s frozen reference rows (order-insensitive, numbers within 0.5%).'],
+          ['Budget', 'Every setup gets the same caps per prompt: 15 tool calls, 250k tokens (agent and reviewer together) and 180 s. Over a cap fails as <em>over budget</em> or <em>timed out</em>.'],
+          ['Infra error', 'A provider outage (rate limit, overload, 5xx, connection) or a Malloy compiler crash. Retried twice, then left out of pass rate and pass^k, and counted separately.'],
           ['Always passed', 'Share of prompts passed in <em>every</em> repeat (pass^k). Use 3+ repeats: one prompt moves a 22-prompt score by 4.5 points.'],
           ['Flaky', 'Prompts passed in some repeats but not all.'],
           ['Cost', 'The agent’s tokens, reviewer included, at list prices, per prompt.'],
@@ -126,7 +160,9 @@ function pages() {
         ])}`},
       {id: 'cli', title: 'Command line', body: `
         ${table(['Task', 'Command'], [
-          ['Run matrices without the UI', code('uv run python -m app.bench --harness on off --runs 3')],
+          ['Run matrices without the UI (each repeat shuffles the prompt order; add --seed to fix it)', code('uv run python -m app.bench --harness on off --runs 3')],
+          ['Freeze reference results after changing prompts or the warehouse', code('uv run python -m app.gold freeze')],
+          ['Check the frozen results still match the reference SQL', code('uv run python -m app.gold verify')],
           ['Check every prompt is expressible in both semantic layers', code('uv run python -m app.expressibility')],
           ['Rebuild the warehouse', code('uv run python -m app.db')],
         ])}

@@ -33,6 +33,8 @@ It also has traps: look-alike tables, a deprecated mart, cancelled orders, mixed
 | dbt MetricFlow | A compact catalog, inline metric definitions, result steps (top-N, share of total) |
 | Malloy | A flat-output check |
 
+**How it's built:** agents run on [Pydantic AI](https://pydantic.dev/docs/ai/overview/), the harness checks are [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/) guardrails, our own runner grades, and MLflow records. The Docs tab's *How the evals work* page explains each, and how this maps to [Pydantic Evals](https://pydantic.dev/docs/ai/evals/evals/).
+
 ## Results so far
 
 Sonnet 5.5 on 22 questions, harness on. These runs were graded by rows match *and* an LLM judge, which has since been removed:
