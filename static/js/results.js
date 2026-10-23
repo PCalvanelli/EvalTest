@@ -2,7 +2,8 @@
 // matrix and one loaded from History (both fill app.state).
 
 import {$, $$, esc, mean, fmtS, fmtDur, pct, fmtUSD, passTint, spinner, stat, passBadge} from './ui.js';
-import {app, contextIds, contextName, cellId, modelName, comboLabel} from './config.js';
+import {app, contextIds, contextName, cellId, cellLabel, modelName, comboLabel} from './config.js';
+import {rank, winnerHtml, tableHtml, initWeights, renderShares} from './ranking.js';
 
 // All finished reports for a cell, in run order.
 const reportsFor = (id) => Object.keys(app.state.runs).map(Number).sort((a, b) => a - b)
@@ -22,6 +23,7 @@ function aggregate(id) {
     min: Math.min(...rates),
     max: Math.max(...rates),
     seconds: mean(rs.map((r) => r.total_seconds)),
+    case_seconds: mean(rs.map((r) => r.avg_case_seconds)),  // agent time per prompt, excluding queueing
     tokens: mean(rs.map((r) => r.total_tokens)),
     tool_calls: mean(rs.map((r) => r.tool_calls)),
     // Matrices logged before costs were computed server side have no cost_usd.
@@ -59,7 +61,29 @@ export function renderRunTimes() {
   el.classList.toggle('hidden', !parts.length);
 }
 
-/** Show one results tab: overview (pass rate), questions or detail (the selected setup's answers). */
+// Every setup with a finished report, ranked by the weighted score. Final once every setup has all its repeats (or
+// has failed).
+function ranking() {
+  const {state} = app;
+  const entries = state.cells.map((c) => [c.id, aggregate(c.id)]).filter(([, a]) => a)
+    .map(([id, a]) => ({id, label: cellLabel(id), accuracy: a.pass_rate, cost: a.cost, seconds: a.case_seconds}));
+  const final = state.cells.every((c) => state.errors[c.id] || aggregate(c.id)?.n === state.repeats);
+  return {...rank(entries), final};
+}
+
+function renderRanking() {
+  const r = ranking();
+  $('#winner').innerHTML = winnerHtml(r, r.final);
+  $('#winner').classList.toggle('hidden', !r.ranked.length);
+  $$('#winner [data-goto]').forEach((b) => b.onclick = () => showTab(b.dataset.goto));
+  $('#ranking').innerHTML = r.ranked.length ? tableHtml(r) : '';
+  $('#rankingNote').innerHTML = r.noCost
+    ? '<p class="hint mt-3">Cost isn’t recorded for this run, so the ranking uses accuracy and speed only.</p>' : '';
+  renderShares(r.noCost);
+  return r;
+}
+
+/** Show one results tab: overview (pass rate), ranking, questions or detail (the selected setup's answers). */
 export function showTab(name) {
   app.state.tab = name;
   $$('#resultTabs [data-pane]').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.pane === name)));
@@ -74,6 +98,7 @@ export function renderAll() {
   $('#resultTabs').classList.replace('hidden', 'flex');
   $$('#resultTabs [data-pane]').forEach((b) => b.onclick = () => showTab(b.dataset.pane));
   showTab(state.tab);
+  initWeights(() => renderMatrix());
   renderMatrix();
   renderRunTimes();
   renderPerPrompt();
@@ -105,6 +130,7 @@ function liveCell(id) {
 function renderMatrix() {
   const {state} = app;
   const {models, combos} = planDims();
+  const winner = renderRanking().ranked[0]?.id;
   // Two header rows: each target over its baseline / harness columns. Columns share the width equally.
   const targets = [...new Set(combos.map((c) => c.context))];
   const head = `<tr><th class="w-px"></th>${targets.map((t) =>
@@ -113,7 +139,7 @@ function renderMatrix() {
     `<th style="width:${100 / combos.length}%" class="px-1 text-left text-xs font-normal text-ink-muted">${c.harness ? 'Harness' : 'Baseline'}</th>`).join('')}</tr>`;
   const rows = models.map((m) => `<tr>
     <th class="w-px whitespace-nowrap pr-3 text-left text-sm font-medium">${esc(modelName(m))}</th>
-    ${combos.map((c) => renderCell(cellId(m, c.harness, c.context))).join('')}
+    ${combos.map((c) => renderCell(cellId(m, c.harness, c.context), winner)).join('')}
   </tr>`).join('');
   $('#matrix').innerHTML = head + rows;
   $('#matrixWrap').classList.remove('hidden');
@@ -122,7 +148,7 @@ function renderMatrix() {
   $$('#matrix [data-cell]').forEach((b) => b.onclick = () => { selectCell(b.dataset.cell); showTab('detail'); });
 }
 
-function renderCell(id) {
+function renderCell(id, winner) {
   const {state} = app;
   const a = aggregate(id);
   const selected = state.selected === id;
@@ -155,6 +181,7 @@ function renderCell(id) {
     style="background:${passTint(a.pass_rate)}">
     <div class="whitespace-nowrap text-2xl font-semibold leading-tight tracking-tight tabular-nums">${pct(a.pass_rate)}${counts}</div>
     ${money}${runs}${err}
+    ${id === winner ? '<div class="mt-auto pt-2"><span class="badge badge-pass" title="Best weighted score: see Ranking">Winner</span></div>' : ''}
   </button></td>`;
 }
 
