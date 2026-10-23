@@ -125,3 +125,58 @@ def _load(uri: str) -> Any:
         return mlflow.artifacts.load_dict(uri)
     except Exception:
         return None
+
+
+_matrix_cache: dict[str, dict] = {}  # finished matrices don't change
+
+
+def _cached_matrix(matrix_id: str) -> dict:
+    if matrix_id in _matrix_cache:
+        return _matrix_cache[matrix_id]
+    matrix = _load_matrix(matrix_id)
+    if matrix['status'] != 'RUNNING':
+        _matrix_cache[matrix_id] = matrix
+    return matrix
+
+
+@router.get('/targets/measured')
+async def measured(model: str | None = None, harness: bool = True) -> dict:
+    """Pass rates per target, overall and per question tag, pooled over every matrix graded under the current
+    benchmark version, for one model and harness mode. `consistent`: prompts passed in every repeat (pass^k), over
+    prompts with at least two scored repeats. `models`: scored answers per model, to pick from."""
+    from .evals import BENCHMARK_VERSION
+    from .questions import QUESTION_SETS
+
+    tags = {q['id']: q['tags'] for qs in QUESTION_SETS.values() for q in qs}
+
+    def work() -> dict:
+        parents, _ = _group(_all_runs(_experiment()))
+        models: dict[str, int] = defaultdict(int)
+        reports = []
+        for p in parents:
+            if p.data.params.get('benchmark_version') != str(BENCHMARK_VERSION):
+                continue
+            for run in _cached_matrix(p.info.run_id)['runs'].values():
+                for report in run.values():
+                    scored = [c for c in report['cases'] if c.get('status') != 'infra_error' and c.get('name') in tags]
+                    models[report['model']] += len(scored)
+                    if report['harness_on'] == harness:
+                        reports.append((p.info.run_id, report, scored))
+        pick = model or max(models, key=models.get, default=None)
+        cells: dict = defaultdict(lambda: defaultdict(lambda: {'passed': 0, 'n': 0}))
+        repeats: dict = defaultdict(list)  # (matrix, target, prompt) -> outcomes across repeats
+        for matrix_id, report, scored in reports:
+            if report['model'] != pick:
+                continue
+            for c in scored:
+                for key in ('all', *tags[c['name']]):
+                    cells[report['context']][key]['n'] += 1
+                    cells[report['context']][key]['passed'] += bool(c['passed'])
+                repeats[(matrix_id, report['context'], c['name'])].append(bool(c['passed']))
+        for (_, target, _), outcomes in repeats.items():
+            if len(outcomes) > 1:
+                cells[target]['consistent']['n'] += 1
+                cells[target]['consistent']['passed'] += all(outcomes)
+        return {'model': pick, 'harness': harness, 'models': dict(models), 'cells': cells}
+
+    return await asyncio.to_thread(work)
