@@ -13,7 +13,6 @@ const table = (head, rows) => `<div class="my-4 overflow-x-auto rounded-panel bo
 </table></div>`;
 const p = (html) => `<p class="my-3 text-[15px] leading-7">${html}</p>`;
 const code = (s) => `<code class="rounded bg-surface-2 px-1 py-0.5 text-[13px]">${esc(s)}</code>`;
-const callout = (html) => `<div class="my-4 rounded-panel border border-border bg-surface px-4 py-3 text-sm leading-6">${html}</div>`;
 
 // The site map: sidebar groups, each with its pages, in reading order.
 function pages() {
@@ -22,26 +21,24 @@ function pages() {
     {group: 'Overview', items: [
       {id: 'intro', title: 'Introduction', body: `
         ${p('<strong>How much of an AI analytics agent’s accuracy comes from the model, from the data interface it queries, and from the harness around it?</strong> This app measures all three at once. A <strong>setup</strong> is one model × target × harness; every setup answers the same prompts over the same warehouse, under the same budget, graded against frozen correct answers.')}
-        ${p('That makes it a <em>configuration</em> benchmark. Model benchmarks hold the interface fixed and vary the model; semantic-layer benchmarks hold the agent fixed and vary the interface. This one varies all three, so it can show how much each adds and whether they interact: does a semantic layer matter less with a good harness?')}
-        ${callout('<strong>Why it matters:</strong> a semantic layer and a harness both promise accuracy, at different costs: modeling work up front, or tokens and latency on every question. This app puts numbers on accuracy, consistency, cost and speed, so you can choose on evidence instead of claims.')}
+        ${p('That makes it a <em>configuration</em> benchmark: it varies all three, so it shows how much each adds and whether they interact. A semantic layer costs modeling work up front; a harness costs tokens and latency on every question. This puts numbers on both.')}
         <h3 class="mt-6 text-base font-semibold">The warehouse</h3>
-        ${p('A DuckDB warehouse: 52 tables (raw → staging → marts) with seed data from 2024-01 to 2025-09. It holds <em>no business metrics</em>: net revenue, MRR and churn are defined only in the semantic layers (and, in words, the glossary).')}
-        ${p('It also has traps an agent must avoid: look-alike tables, a deprecated mart, cancelled orders and mixed currencies.')}`},
+        ${p('A DuckDB warehouse: 52 tables (raw → staging → marts), 2024-01 to 2025-09. It holds <em>no business metrics</em>: net revenue, MRR and churn are defined only in the semantic layers (and, in words, the glossary). It also has traps: look-alike tables, a deprecated mart, cancelled orders and mixed currencies.')}`},
       {id: 'how', title: 'How a run works', body: `
         ${p('A run is a <strong>matrix</strong>. Each model × target × harness combination you pick is a <strong>setup</strong>, one cell in the results grid.')}
         ${table(['Step', 'What happens'], [
           ['<span class="whitespace-nowrap">1. Plan</span>', 'Every combination becomes a setup.'],
-          ['2. Answer', 'Each setup answers every prompt in the prompt set. A fresh agent per prompt; six agents run at a time across the matrix.'],
+          ['2. Answer', 'Each setup answers every prompt with a fresh agent, under the same caps: 15 tool calls, 250k tokens, 180 s. Concurrency is set in Settings.'],
           ['3. Grade', 'The agent’s final query runs and its rows are compared with the question’s frozen reference rows.'],
           ['4. Repeat', 'Repeats run the whole matrix again, one after another, to measure consistency.'],
           ['5. Record', `Reports, traces and costs are logged to ${ext('https://mlflow.org/', 'MLflow')}, so every run reopens in History.`],
         ])}`},
       {id: 'using', title: 'Using the app', body: `
         ${table(['Tab', 'Use it to'], [
-          ['<a class="link" href="#/run">Run</a>', 'Pick models, agents, targets, a prompt set and repeats, then watch results stream in.'],
+          ['<a class="link" href="#/run">Run</a>', 'Pick setups and repeats; results stream in.'],
           ['<a class="link" href="#/history">History</a>', 'Reopen a past run, or run it again with the same settings.'],
           ['<a class="link" href="#/harness">Harness</a>', 'See exactly what the agent is given, baseline vs. harness, for each target.'],
-          ['<a class="link" href="#/settings">Settings</a>', 'Pick the models on offer and their prices, how many agents run at once, and the failure labeler. Saved on this machine; API keys and the per-prompt limits are shown read-only.'],
+          ['<a class="link" href="#/settings">Settings</a>', 'Models and prices, concurrency and the failure labeler.'],
           ['MLflow', 'Inspect traces: every model call and tool call for each prompt.'],
         ])}
         <h3 class="mt-6 text-base font-semibold">Reading results</h3>
@@ -75,7 +72,7 @@ function pages() {
           ['Output checks', 'The final query must run and return data, and pass the target’s lints.'],
           ['Reviewer', 'A fresh agent checks the answer against the question and can send it back.'],
         ])}
-        ${p('The <a class="link" href="#/harness">Harness</a> tab shows all of it, step by step, for each target. How it’s built: <a class="link" href="#/docs?s=evals" data-jump="evals">How the evals work</a>.')}`},
+        ${p('See it per target on the <a class="link" href="#/harness">Harness</a> tab.')}`},
       {id: 'evals', title: 'How the evals work', body: `
         ${p('Every eval runs on four pieces, one job each.')}
         ${table(['Piece', 'Its job here'], [
@@ -90,14 +87,7 @@ function pages() {
           [code('ToolGuardrail'), 'Each query before it runs. Raw SQL: one read-only SELECT. MetricFlow and Malloy: the query must compile.', 'The call is skipped and the refusal becomes the tool result, so the agent sees why and fixes it.'],
           [code('OutputGuardrail'), 'The final answer, in order: the query runs (up to 2 retries), returns data (1), passes the target’s lints (1), then a reviewer agent checks it (up to 2 send-backs).', 'The answer goes back to the agent with the reason. Every step is capped, so a stubborn case ends with an answer on record, not a crash.'],
         ])}
-        ${p('Prompt caching, cite-the-run and lean results are Pydantic AI settings and our own tool code, not Harness capabilities. The <a class="link" href="#/harness">Harness</a> tab lists every piece per target.')}
-        <h3 class="mt-6 text-base font-semibold">One question, start to finish</h3>
-        ${table(['Step', 'What happens'], [
-          ['1. Answer', 'A fresh agent gets the question, with the same caps in every setup: 15 tool calls, 250k tokens (agent and reviewer together), 180 s.'],
-          ['2. Grade', `Its final query runs on DuckDB. The rows are compared with the question’s frozen reference rows (${code('gold/gold.json')}): row order is ignored, numbers must be within 0.5%.`],
-          ['3. Outcome', '<strong>Pass</strong>; <strong>fail</strong> (wrong rows, over budget or timed out); or <strong>infra error</strong> (a provider or compiler outage, retried twice, then left out of the scores).'],
-          ['4. Record', 'MLflow stores the trace with its pass/fail, and the setup’s metrics.'],
-        ])}
+        ${p('Prompt caching, cite-the-run and lean results are Pydantic AI settings and our own tool code, not Harness capabilities.')}
         <h3 class="mt-6 text-base font-semibold">Compared with Pydantic Evals</h3>
         ${p(`${ext('https://pydantic.dev/docs/ai/evals/evals/', 'Pydantic Evals')} is Pydantic’s code-first framework for evaluating AI systems. Its terms map onto this app’s:`)}
         ${table(['Pydantic Evals', 'Here'], [
@@ -107,18 +97,18 @@ function pages() {
           [code('repeat'), 'Repeats'],
           ['Experiment / report', 'One setup’s repeat / its report in History'],
         ])}
-        ${p(`We don’t use it today: it would replace only the grading step. Our runner also runs the setup grid on one shared concurrency limit, streams progress live, enforces equal budgets and leaves out infra errors, and MLflow already holds the results. LLM-judged failure labels don’t need it either: they are one Pydantic AI call with a typed answer (${code('app/labels.py')}), logged to MLflow beside pass/fail.`)}`},
+        ${p(`We don’t use it: it would replace only the grading step, while our runner also schedules the setup grid, streams progress, enforces budgets and sets infra errors aside, and MLflow holds the results. Failure labels are one Pydantic AI call (${code('app/labels.py')}).`)}`},
       {id: 'scoring', title: 'Scoring', body: `
         ${table(['Measure', 'What it means'], [
           ['Pass', 'The final query runs and its rows match the question’s frozen reference rows (order-insensitive, numbers within 0.5%).'],
           ['Partial', 'A fail, labeled separately: every reference column matches, but the answer adds columns nobody asked for.'],
-          ['Budget', 'Every setup gets the same caps per prompt: 15 tool calls, 250k tokens (agent and reviewer together) and 180 s. Over a cap fails as <em>over budget</em> or <em>timed out</em>.'],
-          ['Infra error', 'A provider outage (rate limit, overload, 5xx, connection) or a Malloy compiler crash. Retried twice, then left out of pass rate and pass^k, and counted separately.'],
+          ['Budget', 'Same caps per prompt for every setup: 15 tool calls, 250k tokens (reviewer included), 180 s. Over a cap is a fail.'],
+          ['Infra error', 'A provider outage or a compiler crash. Retried twice, then left out of the scores and counted separately.'],
           ['Always passed', 'Share of prompts passed in <em>every</em> repeat (pass^k). Use 3+ repeats: one prompt moves a 22-prompt score by 4.5 points.'],
           ['Flaky', 'Prompts passed in some repeats but not all.'],
-          ['95% CI', 'The likely range of a pass rate on another set of similar prompts: a bootstrap over prompts. With 22 prompts it spans about ±18 points, so read small gaps with care.'],
-          ['Compare', 'Two setups, prompt by prompt (Pass rate tab). Shows the difference with its 95% interval, how many prompts only one gets right, and a McNemar test. A difference is <em>clear</em> when its interval leaves out zero. The winner line says whether the winner is clearly more accurate than the runner-up.'],
-          ['Failure label', `Why each failed answer failed. Rules label budget, never-ran, made-up names, extra columns and ambiguous references as answers are graded. Wrong rows get an LLM label (join path, fan-out, metric definition, filter/time/grain) from ${code('python -m app.labels <matrix id>')}. Labels never change pass/fail.`],
+          ['95% CI', 'The likely range of a pass rate on similar prompts (bootstrap over prompts). With 22 prompts, about ±18 points.'],
+          ['Compare', 'Two setups, prompt by prompt: the difference with its 95% interval, and a McNemar test. A difference is <em>clear</em> when its interval leaves out zero.'],
+          ['Failure label', `Why an answer failed. Rules label what the case shows; wrong rows get an LLM label from ${code('python -m app.labels <matrix id>')}. Labels never change pass/fail.`],
           ['Spread', 'Per repeat: agent time and tool calls at the median and 95th percentile, and cost per correct answer.'],
           ['Cost', 'The agent’s tokens, reviewer included, at list prices, per prompt.'],
         ])}
@@ -145,6 +135,7 @@ function pages() {
           [code('GET /api/matrices'), `Past runs, newest first, with summary metrics. Paged with ${code('limit')} and ${code('offset')}.`],
           [code('GET /api/matrices/{id}'), 'One past run in full: setups, prompts, every report and answer, errors and timings.'],
           [code('GET /api/harness/{target}'), `What one target’s agent sees: instructions, tools and checks. ${code('?mode=on')} for the harness, ${code('off')} for the baseline. Calls no model.`],
+          [`${code('GET')} ${code('PUT')} ${code('DELETE /api/settings')}`, 'Read, save or reset the local settings.'],
           [code('/mlflow/'), 'MLflow’s own UI over the same store, for traces.'],
         ])}
         <h3 class="mt-6 text-base font-semibold">Run request body</h3>
@@ -206,11 +197,9 @@ function render(el) {
     </aside>
     <article class="max-w-[780px] pb-24 pt-8">
       <p class="text-sm text-ink-muted">Documentation</p>
-      <h1 class="mb-2 text-3xl font-semibold tracking-tight">Semantic Layer × Harness Bench</h1>
-      <p class="mb-8 text-[15px] leading-7 text-ink-muted">What this app is for, how a run works, and its HTTP API.</p>
+      <h1 class="mb-8 text-3xl font-semibold tracking-tight">Semantic Layer × Harness Bench</h1>
       ${groups.map((g) => g.items.map((it) => `
         <section id="docs-${it.id}" data-section="${it.id}" class="scroll-mt-16 border-t border-border pt-8 mt-8 first:mt-0">
-          <p class="mb-1 text-xs font-semibold uppercase tracking-wide text-ink-subtle">${g.group}</p>
           <h2 class="group text-2xl font-semibold tracking-tight">${it.title}
             <a href="#/docs?s=${it.id}" data-jump="${it.id}" class="ml-1 text-ink-subtle opacity-0 hover:text-ink group-hover:opacity-100" aria-label="Link to ${it.title}">#</a></h2>
           ${it.body}

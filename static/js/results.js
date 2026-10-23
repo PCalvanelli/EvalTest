@@ -96,7 +96,7 @@ function ranking() {
 
 function renderRanking() {
   const r = ranking();
-  $('#winner').innerHTML = winnerHtml(r, r.final, edgeNote(r.ranked));
+  $('#winner').innerHTML = winnerHtml(r, r.final);
   $('#winner').classList.toggle('hidden', !r.ranked.length);
   $$('#winner [data-goto]').forEach((b) => b.onclick = () => showTab(b.dataset.goto));
   $('#ranking').innerHTML = r.ranked.length ? tableHtml(r) : '';
@@ -104,15 +104,6 @@ function renderRanking() {
     ? '<p class="hint mt-3">Cost isn’t recorded for this run, so the ranking uses accuracy and speed only.</p>' : '';
   renderShares(r.noCost);
   return r;
-}
-
-// How sure the winner is ahead of the runner-up on accuracy (the ranking also weighs cost and speed).
-function edgeNote([first, second]) {
-  if (!first || !second) return '';
-  const c = pairedCompare(perPrompt(first.id), perPrompt(second.id));
-  if (!c) return '';
-  const verdict = c.clear ? (c.diff > 0 ? 'clearly more accurate' : 'clearly less accurate') : 'no clear accuracy difference';
-  return `Vs. ${esc(second.label)}: ${verdict} (${points(c.diff)} points, 95% CI ${points(c.ci[0])} to ${points(c.ci[1])})`;
 }
 
 /** Show one results tab: overview (pass rate), ranking, questions or detail (the selected setup's answers). */
@@ -202,8 +193,8 @@ function renderCompare(winner) {
   const c = a === b ? null : pairedCompare(perPrompt(a), perPrompt(b));
   $('#cmpResult').innerHTML = a === b ? '<span class="text-ink-muted">Pick two different setups.</span>' : !c ? '<span class="text-ink-muted">No prompt scored by both yet.</span>' : `
     <p><span class="font-semibold">${c.clear ? (c.diff > 0 ? 'A is clearly more accurate.' : 'B is clearly more accurate.') : 'No clear difference in accuracy.'}</span>
-      <span class="tabular-nums">A minus B: ${points(c.diff)} points (95% CI ${points(c.ci[0])} to ${points(c.ci[1])}).</span></p>
-    <p class="mt-1 text-xs tabular-nums text-ink-muted">Over ${c.n} prompts both answered: A gets ${c.aOnly} right that B misses, B gets ${c.bOnly} right that A misses (by majority of repeats) · McNemar ${c.p < 0.001 ? 'p < 0.001' : `p = ${c.p.toFixed(3)}`}</p>`;
+      <span class="tabular-nums" title="A clear difference has a 95% interval that leaves out zero">A − B: ${points(c.diff)} points (95% CI ${points(c.ci[0])} to ${points(c.ci[1])})</span></p>
+    <p class="mt-1 text-xs tabular-nums text-ink-muted" title="Right by majority of repeats, on the prompts both answered">${c.n} prompts · only A right: ${c.aOnly} · only B right: ${c.bOnly} · McNemar ${c.p < 0.001 ? 'p < 0.001' : `p = ${c.p.toFixed(3)}`}</p>`;
 }
 
 function renderCell(id, winner) {
