@@ -48,7 +48,7 @@ async def main() -> None:
                 failed = [c['name'] for c in report['cases'] if c['status'] == 'fail']
                 harness = 'harness' if report['harness_on'] else 'baseline'
                 print(f'run {event["run"]}  {report["context"]:<10} {harness:<8}  pass {report["passed"]}/{report["total"]} '
-                      f'({report["pass_rate"]:.1%})  tokens {report["total_tokens"]:,}  cost ${report["cost_usd"]:.2f}'
+                      f'({report["pass_rate"]:.1%})  tokens {report["total_tokens"]:,}  cost {"-" if report["cost_usd"] is None else f'${report["cost_usd"]:.2f}'}'
                       f'  failed: {", ".join(failed) or "-"}'
                       + (f'  infra errors (not scored): {report["infra_errors"]}' if report['infra_errors'] else ''), flush=True)
             elif event['type'] == 'cell_error':

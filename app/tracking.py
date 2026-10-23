@@ -181,8 +181,7 @@ class MatrixTracker:
             'tokens_per_question': report['total_tokens'] / n,
             'tool_calls': report['tool_calls'],
             'requests': report['requests'],
-            'cost_usd': cost,
-            'cost_per_question_usd': cost / n,
+            **({'cost_usd': cost, 'cost_per_question_usd': cost / n} if cost is not None else {}),  # None: no prices
             'infra_errors': report.get('infra_errors', 0),
             'over_budget': report.get('over_budget', 0),
             'timeouts': report.get('timeouts', 0),
@@ -192,7 +191,8 @@ class MatrixTracker:
         self.client.log_batch(run_id, metrics=[Metric(k, float(v), ts, run_no) for k, v in values.items()])
         self.client.log_dict(run_id, report, f'run-{run_no}/report.json')  # lets History re-render this run
         self.outcomes[cell_id][run_no] = [None if c.get('status') == 'infra_error' else c['passed'] for c in cases]
-        self.costs[cell_id][run_no] = cost / n
+        if cost is not None:
+            self.costs[cell_id][run_no] = cost / n
 
         for c in cases:
             if c.get('trace_id') and c.get('status') != 'infra_error':
@@ -228,13 +228,15 @@ class MatrixTracker:
                         # A question's infra-error runs are left out; one with no scored run at all drops out entirely.
                         per_prompt = [[x for x in p if x is not None] for p in zip(*runs.values())]
                         per_prompt = [p for p in per_prompt if p]
+                        scored = [[x for x in r if x is not None] for r in runs.values()]
                         values = {
-                            'mean_pass_rate': sum(sum(r) / max(len(r), 1) for r in runs.values()) / len(runs),
+                            'mean_pass_rate': sum(sum(r) / max(len(r), 1) for r in scored) / len(runs),
                             'pass_k': sum(all(p) for p in per_prompt) / max(len(per_prompt), 1),
                             'flaky_prompts': sum(any(p) and not all(p) for p in per_prompt),
                             'runs_completed': len(runs),
-                            'mean_cost_per_question_usd': sum(self.costs[cell_id].values()) / len(runs),
                         }
+                        if costs := self.costs[cell_id]:
+                            values['mean_cost_per_question_usd'] = sum(costs.values()) / len(costs)
                         self.client.log_batch(run_id, metrics=[Metric(k, float(v), int(time.time() * 1000), 0)
                                                                for k, v in values.items()])
                         summary[cell_id] = values

@@ -88,16 +88,17 @@ async def _attempt(question: dict, model: str, context: Context, harness: bool) 
                 **_usage(usage, log.reviewer_usage)}
 
     limits = UsageLimits(request_limit=None, tool_calls_limit=TOOL_CALL_LIMIT, total_tokens_limit=TOKEN_LIMIT)
+    spent = RunUsage()  # the run adds to it as it goes, so a run that raises still reports what it used
     try:
-        result = await agent.run(question['text'], usage_limits=limits, timeout=CASE_TIMEOUT_S)
+        result = await agent.run(question['text'], usage=spent, usage_limits=limits, timeout=CASE_TIMEOUT_S)
     except INFRA_ERRORS as e:
-        return no_answer(f'{type(e).__name__}: {e}', status='infra_error')
+        return no_answer(f'{type(e).__name__}: {e}', status='infra_error', usage=spent)
     except UsageLimitExceeded as e:
-        return no_answer(f'Over budget: {e}', failure='budget')
+        return no_answer(f'Over budget: {e}', failure='budget', usage=spent)
     except RunTimedOut as e:
-        return no_answer(f'Timed out after {CASE_TIMEOUT_S} s', failure='timeout', usage=e.usage)
+        return no_answer(f'Timed out after {CASE_TIMEOUT_S} s', failure='timeout', usage=e.usage or spent)
     except Exception as e:
-        return no_answer(f'{type(e).__name__}: {e}')
+        return no_answer(f'{type(e).__name__}: {e}', usage=spent)
     seconds = time.perf_counter() - start
     answer = result.output
     metricflow_query = answer.query.model_dump(exclude_defaults=True) if isinstance(answer, MetricFlowAnswer) else None
@@ -208,7 +209,7 @@ async def run_eval(
         'sent_back': total('sent_back'),
         'defined_metrics': total('defined_metrics'),
         'lint_retries': sum(len(c.get('lints') or []) for c in cases),
-        'cost_usd': total('cost_usd'),
+        'cost_usd': None if any(c['cost_usd'] is None for c in cases) else total('cost_usd'),  # None: no prices
         'cases': cases,
     }
 
