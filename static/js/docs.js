@@ -113,6 +113,9 @@ function pages() {
           ['Infra error', 'A provider outage (rate limit, overload, 5xx, connection) or a Malloy compiler crash. Retried twice, then left out of pass rate and pass^k, and counted separately.'],
           ['Always passed', 'Share of prompts passed in <em>every</em> repeat (pass^k). Use 3+ repeats: one prompt moves a 22-prompt score by 4.5 points.'],
           ['Flaky', 'Prompts passed in some repeats but not all.'],
+          ['95% CI', 'The likely range of a pass rate on another set of similar prompts: a bootstrap over prompts. With 22 prompts it spans about ±18 points, so read small gaps with care.'],
+          ['Compare', 'Two setups, prompt by prompt (Pass rate tab). Shows the difference with its 95% interval, how many prompts only one gets right, and a McNemar test. A difference is <em>clear</em> when its interval leaves out zero. The winner line says whether the winner is clearly more accurate than the runner-up.'],
+          ['Spread', 'Per repeat: agent time and tool calls at the median and 95th percentile, and cost per correct answer.'],
           ['Cost', 'The agent’s tokens, reviewer included, at list prices, per prompt.'],
         ])}
         <h3 class="mt-6 text-base font-semibold">Prompt sets</h3>
@@ -164,7 +167,7 @@ function pages() {
           ['Run matrices without the UI (each repeat shuffles the prompt order; add --seed to fix it)', code('uv run python -m app.bench --harness on off --runs 3')],
           ['Freeze reference results after changing prompts or the warehouse', code('uv run python -m app.gold freeze')],
           ['Check the frozen results still match the reference SQL', code('uv run python -m app.gold verify')],
-          ['Run the tests', code('uv run pytest')],
+          ['Run the tests', `${code('uv run pytest')} and ${code('node --test tests/*.test.mjs')}`],
           ['Check every prompt is expressible in both semantic layers', code('uv run python -m app.expressibility')],
           ['Rebuild the warehouse', code('uv run python -m app.db')],
         ])}

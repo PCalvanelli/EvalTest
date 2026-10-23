@@ -54,6 +54,8 @@ Both semantic layers can express every question (`uv run python -m app.expressib
 |---|---|
 | Pass | The final query runs and its rows match the question's frozen reference rows (order-insensitive, numbers within 0.5%) |
 | Partial | A fail, labeled separately: every reference column matches, but the answer adds columns nobody asked for |
+| 95% CI | Likely range of a pass rate on another set of similar prompts (bootstrap over prompts). About ±18 points with 22 prompts |
+| Compare | Two setups prompt by prompt: difference with its 95% interval, plus a McNemar test. *Clear* when the interval leaves out zero |
 | pass^k | Share of questions passed in *every* run. Use Runs ≥ 3: one question moves the score 4.5 points |
 | Cost | The agent's tokens (reviewer included) at list prices (`app/pricing.py`), per question |
 | Budget | Every setup gets the same caps per question: 15 tool calls, 250k tokens (agent and reviewer together) and 180 s. A case over a cap fails as *over budget* or *timed out* |
@@ -82,7 +84,7 @@ uv run uvicorn app.main:app --reload --reload-dir app --reload-dir static
 | Rebuild the warehouse | `uv run python -m app.db` (it also rebuilds itself when its SQL changes) |
 | Freeze reference results (after changing questions or the warehouse) | `uv run python -m app.gold freeze` |
 | Check the frozen results still match the reference SQL | `uv run python -m app.gold verify` |
-| Run the tests | `uv run pytest` |
+| Run the tests | `uv run pytest` and `node --test tests/*.test.mjs` |
 | Use an MLflow server | `MLFLOW_TRACKING_URI` (default: `data/mlflow.db`) |
 | Turn off tracking | `EVAL_MLFLOW=off` |
 

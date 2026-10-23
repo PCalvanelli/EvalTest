@@ -4,6 +4,7 @@
 import {$, $$, esc, mean, fmtS, fmtDur, pct, fmtUSD, passTint, spinner, stat, passBadge} from './ui.js';
 import {app, contextIds, contextName, cellId, cellLabel, modelName, comboLabel} from './config.js';
 import {rank, winnerHtml, tableHtml, initWeights, renderShares} from './ranking.js';
+import {passRateCI, pairedCompare, quantile} from './stats.js';
 
 // All finished reports for a cell, in run order.
 const reportsFor = (id) => Object.keys(app.state.runs).map(Number).sort((a, b) => a - b)
@@ -11,6 +12,20 @@ const reportsFor = (id) => Object.keys(app.state.runs).map(Number).sort((a, b) =
 
 // Infrastructure errors (provider or compiler failures) are retried, then left out of every score.
 const scored = (c) => c && c.status !== 'infra_error';
+
+// A setup's outcomes per prompt: 1/0 for each scored repeat, in prompt order (what stats.js works on).
+const perPrompt = (id) => app.state.prompts.map((_, i) => reportsFor(id).map((r) => r.cases[i]).filter(scored).map((c) => (c.passed ? 1 : 0)));
+const range = ([lo, hi]) => `${pct(lo)}–${pct(hi)}`;
+const points = (x) => `${x > 0 ? '+' : x < 0 ? '−' : ''}${Math.abs(100 * x).toFixed(1)}`;
+// Intervals change only when a setup finishes a repeat, but results re-render on every progress frame: cache them.
+const ciCache = new WeakMap();  // state -> {'<setup>@<repeats>': interval}
+function cachedCI(id, rs) {
+  const cache = ciCache.get(app.state) ?? ciCache.set(app.state, {}).get(app.state);
+  const key = `${id}@${rs.map((r) => r.run).join(',')}`;
+  if (!(key in cache)) cache[key] = passRateCI(perPrompt(id));
+  return cache[key];
+}
+const CI_TITLE = 'Likely range of the pass rate on another set of similar prompts (95% bootstrap interval over prompts)';
 
 // Question-level progress for a cell's runs that have no report yet (live runs only).
 const pendingProgress = (id) => Object.entries(app.state.progress ?? {})
@@ -32,6 +47,7 @@ function aggregate(id) {
     // Matrices logged before costs were computed server side have no cost_usd.
     cost: rs.every((r) => r.cost_usd != null) ? mean(rs.map((r) => r.cost_usd / Math.max(r.total, 1))) : null,
     infra: rs.reduce((n, r) => n + (r.infra_errors ?? 0), 0),
+    ci: cachedCI(id, rs),
     ...consistency(rs),
   };
 }
@@ -79,7 +95,7 @@ function ranking() {
 
 function renderRanking() {
   const r = ranking();
-  $('#winner').innerHTML = winnerHtml(r, r.final);
+  $('#winner').innerHTML = winnerHtml(r, r.final, edgeNote(r.ranked));
   $('#winner').classList.toggle('hidden', !r.ranked.length);
   $$('#winner [data-goto]').forEach((b) => b.onclick = () => showTab(b.dataset.goto));
   $('#ranking').innerHTML = r.ranked.length ? tableHtml(r) : '';
@@ -87,6 +103,15 @@ function renderRanking() {
     ? '<p class="hint mt-3">Cost isn’t recorded for this run, so the ranking uses accuracy and speed only.</p>' : '';
   renderShares(r.noCost);
   return r;
+}
+
+// How sure the winner is ahead of the runner-up on accuracy (the ranking also weighs cost and speed).
+function edgeNote([first, second]) {
+  if (!first || !second) return '';
+  const c = pairedCompare(perPrompt(first.id), perPrompt(second.id));
+  if (!c) return '';
+  const verdict = c.clear ? (c.diff > 0 ? 'clearly more accurate' : 'clearly less accurate') : 'no clear accuracy difference';
+  return `Vs. ${esc(second.label)}: ${verdict} (${points(c.diff)} points, 95% CI ${points(c.ci[0])} to ${points(c.ci[1])})`;
 }
 
 /** Show one results tab: overview (pass rate), ranking, questions or detail (the selected setup's answers). */
@@ -153,6 +178,31 @@ function renderMatrix() {
   $('#mlflowLink').classList.toggle('hidden', !state.mlflow?.matrix);
   if (state.mlflow?.matrix) $('#mlflowLink').href = state.mlflow.matrix;
   $$('#matrix [data-cell]').forEach((b) => b.onclick = () => { selectCell(b.dataset.cell); showTab('detail'); });
+  renderCompare(winner);
+}
+
+// Compare two setups prompt by prompt. The pickers are rebuilt only when the setups with results change, so live
+// progress doesn't reset a choice being made.
+function renderCompare(winner) {
+  const {state} = app;
+  const ids = state.cells.map((c) => c.id).filter((id) => aggregate(id));
+  $('#compareWrap').classList.toggle('hidden', ids.length < 2);
+  if (ids.length < 2) return;
+  const ranked = ranking().ranked.map((e) => e.id);
+  state.compare ??= [winner ?? ranked[0], ranked.find((id) => id !== (winner ?? ranked[0]))];
+  for (const [i, sel] of [$('#cmpA'), $('#cmpB')].entries()) {
+    const html = ids.map((id) => `<option value="${esc(id)}">${esc(cellLabel(id))}</option>`).join('');
+    if (sel.dataset.options !== html) { sel.innerHTML = html; sel.dataset.options = html; }
+    if (!ids.includes(state.compare[i])) state.compare[i] = ids[i];
+    sel.value = state.compare[i];
+    sel.onchange = () => { state.compare[i] = sel.value; renderCompare(winner); };
+  }
+  const [a, b] = state.compare;
+  const c = a === b ? null : pairedCompare(perPrompt(a), perPrompt(b));
+  $('#cmpResult').innerHTML = a === b ? '<span class="text-ink-muted">Pick two different setups.</span>' : !c ? '<span class="text-ink-muted">No prompt scored by both yet.</span>' : `
+    <p><span class="font-semibold">${c.clear ? (c.diff > 0 ? 'A is clearly more accurate.' : 'B is clearly more accurate.') : 'No clear difference in accuracy.'}</span>
+      <span class="tabular-nums">A minus B: ${points(c.diff)} points (95% CI ${points(c.ci[0])} to ${points(c.ci[1])}).</span></p>
+    <p class="mt-1 text-xs tabular-nums text-ink-muted">Over ${c.n} prompts both answered: A gets ${c.aOnly} right that B misses, B gets ${c.bOnly} right that A misses (by majority of repeats) · McNemar ${c.p < 0.001 ? 'p < 0.001' : `p = ${c.p.toFixed(3)}`}</p>`;
 }
 
 function renderCell(id, winner) {
@@ -192,6 +242,7 @@ function renderCell(id, winner) {
     title="${esc(details)}" class="flex h-full w-full min-w-[104px] flex-col rounded-control border p-3 text-left transition-colors hover:border-border-strong ${selected ? 'border-accent ring-2 ring-accent/40' : 'border-border'}"
     style="background:${passTint(a.pass_rate)}">
     <div class="whitespace-nowrap text-2xl font-semibold leading-tight tracking-tight tabular-nums">${pct(a.pass_rate)}${counts}</div>
+    ${a.ci ? `<div class="whitespace-nowrap text-[11px] tabular-nums text-ink-muted" title="${CI_TITLE}">95% CI ${range(a.ci.rate)}</div>` : ''}
     ${money}${runs}${infra}${err}
     ${id === winner ? '<div class="mt-auto pt-2"><span class="badge badge-pass" title="Best weighted score: see Ranking">Winner</span></div>' : ''}
   </button></td>`;
@@ -250,8 +301,8 @@ function renderRunSummary(id, rs, activeRun) {
   <section class="panel mb-4 p-4">
     <h3 class="mb-2 text-sm font-medium text-ink-muted">Across ${a.n} of ${state.repeats} repeats</h3>
     <div class="mb-3 grid grid-cols-2 gap-2 md:grid-cols-5">
-      ${stat('Always passed', pct(a.pass_k))}
-      ${stat('Average pass rate', pct(a.pass_rate))}
+      ${stat('Always passed', `${pct(a.pass_k)}${a.ci ? `<span class="block text-xs font-normal text-ink-muted">95% CI ${range(a.ci.passK)}</span>` : ''}`)}
+      ${stat('Average pass rate', `${pct(a.pass_rate)}${a.ci ? `<span class="block text-xs font-normal text-ink-muted">95% CI ${range(a.ci.rate)}</span>` : ''}`, CI_TITLE)}
       ${stat('Range', `${pct(a.min)}–${pct(a.max)}`)}
       ${stat('Average time', fmtS(a.seconds))}
       ${stat('Average tokens', Math.round(a.tokens).toLocaleString())}
@@ -283,6 +334,7 @@ function renderReport(r) {
       <summary class="cursor-pointer select-none text-xs text-ink-muted hover:text-ink">More stats</summary>
       <div class="mt-2 grid grid-cols-2 gap-2 md:grid-cols-6">
         ${stat('Per question', fmtS(r.avg_case_seconds))}
+        ${caseStats(r)}
         ${r.cache_read_tokens ? stat('Input cached', pct(r.cache_read_tokens / Math.max(r.input_tokens, 1))) : ''}
         ${stat('Requests', r.requests)}
         ${stat('Tool calls', r.tool_calls)}
@@ -296,6 +348,17 @@ function renderReport(r) {
     </details>
     <div class="grid gap-3 xl:grid-cols-2">${r.cases.map(renderCase).join('')}</div>
   </section>`;
+}
+
+// Spread across one repeat's answered prompts: time and tool calls at the median and 95th percentile, and cost per
+// correct answer (the run's whole cost over its passes).
+function caseStats(r) {
+  const answered = r.cases.filter((c) => c.seconds != null);
+  if (!answered.length) return '';
+  const q = (key, p) => quantile(answered.map((c) => c[key] ?? 0), p);
+  return stat('Time p50 / p95', `${fmtS(q('seconds', 0.5))} / ${fmtS(q('seconds', 0.95))}`, 'Agent time per prompt, excluding waiting for a slot') +
+    stat('Tool calls p50 / p95', `${+q('tool_calls', 0.5).toFixed(1)} / ${+q('tool_calls', 0.95).toFixed(1)}`) +
+    (r.cost_usd != null ? stat('Cost per correct', r.passed ? fmtUSD(r.cost_usd / r.passed) : '—', 'Total cost of this repeat ÷ prompts passed') : '');
 }
 
 const queryLabel = (text) => `<p class="mt-2.5 text-xs font-medium text-ink-muted">${text}</p>`;
