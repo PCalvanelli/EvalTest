@@ -15,13 +15,12 @@ from pydantic_ai.exceptions import (ModelConnectionError, ModelQuotaExceededErro
                                     UsageLimitExceeded)
 from pydantic_ai.usage import RunUsage, UsageLimits
 
-from . import db, gold, tracking
+from . import db, gold, settings, tracking
 from .labels import count_labels, rule_label
 from .agent import Context, HarnessLog, MalloyAnswer, MetricFlowAnswer, answer_sql, build_agent
 from .malloy_bridge import SidecarError
 from .pricing import case_cost
 
-MAX_CONCURRENT_AGENT_RUNS = 6
 # Bump when what a pass means changes (grading, budgets, targets, questions), so History can tell which matrices compare.
 BENCHMARK_VERSION = 2
 
@@ -229,12 +228,13 @@ async def run_matrix(cells: list[dict], questions: Sequence[dict], repeats: int,
     omitted, and recorded), so no question always queues last behind rate limits."""
     gold.check(questions)  # before any MLflow run is opened, so a stale reference never starts a matrix
     seed = random.randrange(2 ** 31) if seed is None else seed
-    params = {'benchmark_version': BENCHMARK_VERSION, 'seed': seed, **LIMITS, 'models': ','.join(dict.fromkeys(c['model'] for c in cells)),
+    concurrency = settings.current().concurrency  # fixed for the whole matrix, even if Settings change mid-run
+    params = {'benchmark_version': BENCHMARK_VERSION, 'seed': seed, 'concurrency': concurrency, **LIMITS, 'models': ','.join(dict.fromkeys(c['model'] for c in cells)),
               'harness_modes': ','.join(dict.fromkeys('on' if c['harness_on'] else 'off' for c in cells)),
               'contexts': ','.join(dict.fromkeys(c['context'] for c in cells)),
               'repeats': repeats, 'prompts': len(questions), **tracking.provenance(), **params}
     tracker = await asyncio.to_thread(tracking.MatrixTracker.start, cells=cells, questions=questions, params=params)
-    limiter = asyncio.Semaphore(MAX_CONCURRENT_AGENT_RUNS)
+    limiter = asyncio.Semaphore(concurrency)
 
     async def run_cell(cell: dict, run_no: int, order: list[int], events: asyncio.Queue) -> dict:
         try:

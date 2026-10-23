@@ -85,6 +85,7 @@
       <a class="tab" href="#/history" data-tab="history">History</a>
       <a class="tab" href="#/harness" data-tab="harness">Harness</a>
       <a class="tab" href="#/docs" data-tab="docs">Docs</a>
+      <a class="tab" href="#/settings" data-tab="settings">Settings</a>
     </nav>
     <a id="mlflowNav" href="/mlflow/" target="_blank" rel="noopener" class="btn btn-quiet ml-auto hidden"
        title="Open MLflow">MLflow ↗</a>
@@ -147,7 +148,7 @@
       <details class="mb-3 text-xs text-ink-muted">
         <summary class="cursor-pointer select-none hover:text-ink">Timing and cost</summary>
         <p id="runTimes" class="mt-1.5 hidden text-sm tabular-nums" aria-live="off"></p>
-        <p class="hint mt-1.5">Time includes waiting for other setups. Cost uses list prices (<code>app/pricing.py</code>).</p>
+        <p class="hint mt-1.5">Time includes waiting for other setups. Cost uses the model prices in <a class="link" href="#/settings">Settings</a>.</p>
       </details>
       <div class="overflow-x-auto"><table id="matrix" class="w-full border-separate border-spacing-1.5 text-sm"></table></div>
     </section>
@@ -212,6 +213,15 @@
   </div>
   <div id="harnessControls" class="mb-4 flex flex-wrap items-center gap-x-6 gap-y-2"></div>
   <div id="harnessBody"></div>
+</div>
+
+<!-- ─────────────────────────── Settings ─────────────────────────── -->
+<div id="view-settings" class="view mx-auto max-w-[1100px] p-4 lg:p-6" hidden>
+  <div class="mb-4">
+    <h1 class="text-xl font-semibold tracking-tight">Settings</h1>
+    <p class="hint">A lightweight local config: which models to offer and what they cost, and how runs are paced.</p>
+  </div>
+  <div id="settingsBody"></div>
 </div>
 
 <!-- ─────────────────────────── Docs ─────────────────────────── -->

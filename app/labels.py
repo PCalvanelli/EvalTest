@@ -19,7 +19,7 @@ from mlflow.entities import AssessmentSource
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent
 
-from . import db, gold, tracking
+from . import db, gold, settings, tracking
 from .agent import make_model
 from .questions import AMBIGUOUS
 
@@ -36,7 +36,6 @@ LABELS = {
     'other': 'Other',
 }
 Judged = Literal['join_path', 'fan_out', 'metric_definition', 'filter_or_grain', 'other']  # what only reading can tell
-DEFAULT_MODEL = 'claude-haiku-5-5'
 _UNKNOWN_NAME = re.compile(r'does not exist|not found|is not defined|unknown (?:metric|dimension|column|table)|'
                            r'no such|unable to find|unrecognized', re.IGNORECASE)
 
@@ -78,14 +77,14 @@ def _brief(rows: list, limit: int = 10) -> str:
     return json.dumps(rows[:limit], default=str) + (f' … ({len(rows)} rows)' if len(rows) > limit else '')
 
 
-async def judge(case: dict, question: dict, model: str = DEFAULT_MODEL) -> Verdict:
+async def judge(case: dict, question: dict, model: str | None = None) -> Verdict:
     """The LLM's label for a wrong-rows failure."""
     try:
         got = _brief(db.all_rows(case['sql'])) if case.get('sql') else 'no rows'
     except Exception as e:
         got = f'could not re-run: {e}'
     query = case.get('malloy_query') or (json.dumps(case['metricflow_query']) if case.get('metricflow_query') else None)
-    result = await Agent(make_model(model), output_type=Verdict, instructions=INSTRUCTIONS).run(
+    result = await Agent(make_model(model or settings.current().labeler_model), output_type=Verdict, instructions=INSTRUCTIONS).run(
         f'Question:\n{question["text"]}\n\nReference SQL:\n{question["expected_sql"]}\n\n'
         f'Reference result:\n{_brief(gold.rows(question["id"]))}\n\n'
         + (f'Agent query:\n{query}\n\nIt compiled to:\n' if query else 'Agent SQL:\n')
@@ -101,7 +100,7 @@ def log_label(case: dict, source: AssessmentSource) -> None:
                             rationale=case.get('label_rationale'), source=source)
 
 
-async def label_matrix(matrix_id: str, *, model: str = DEFAULT_MODEL, relabel: bool = False) -> dict[str, int]:
+async def label_matrix(matrix_id: str, *, model: str | None = None, relabel: bool = False) -> dict[str, int]:
     """Label every failed case in a past matrix that rules couldn't (and, with relabel, redo earlier LLM labels).
     Saves the labels into each repeat's report, so History shows them, and onto the traces."""
     from mlflow import MlflowClient
@@ -109,6 +108,7 @@ async def label_matrix(matrix_id: str, *, model: str = DEFAULT_MODEL, relabel: b
     from .history import _load_matrix
     from .questions import QUESTION_SETS
 
+    model = model or settings.current().labeler_model
     exp = tracking.experiment_id()  # points MLflow at the app's store before any client is made
     matrix = await asyncio.to_thread(_load_matrix, matrix_id)
     client = MlflowClient()
@@ -148,7 +148,7 @@ def count_labels(cases: list[dict]) -> dict[str, int]:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('matrix', help='Matrix (parent MLflow run) id, as in a History link: #/history?run=<id>')
-    parser.add_argument('--model', default=DEFAULT_MODEL)
+    parser.add_argument('--model', help='Default: the labeler model in Settings.')
     parser.add_argument('--relabel', action='store_true', help='Also redo failures an LLM labeled before.')
     args = parser.parse_args()
     counts = asyncio.run(label_matrix(args.matrix, model=args.model, relabel=args.relabel))

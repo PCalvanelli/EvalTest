@@ -68,7 +68,7 @@ Both semantic layers can express every prompt (`uv run python -m app.expressibil
 | 95% CI | Likely range of a pass rate on another set of similar prompts (bootstrap over prompts). About ±18 points with 22 prompts |
 | Compare | Two setups prompt by prompt: difference with its 95% interval, plus a McNemar test. *Clear* when the interval leaves out zero |
 | pass^k | Share of prompts passed in *every* run. Use Runs ≥ 3: one prompt moves the score 4.5 points |
-| Cost | The agent's tokens (reviewer included) at list prices (`app/pricing.py`), per prompt |
+| Cost | The agent's tokens (reviewer included) at each model's prices from Settings (defaults: Anthropic list prices), per prompt |
 | Budget | Every setup gets the same caps per prompt: 15 tool calls, 250k tokens (agent and reviewer together) and 180 s. A case over a cap fails as *over budget* or *timed out* |
 | Failure label | Why each failed answer failed. Rules label budget, never-ran, made-up names, extra columns and ambiguous references at grading time; `app.labels` has an LLM (Haiku) label wrong rows: join path, fan-out, metric definition, filter/time/grain. Labels never change pass/fail |
 | Infra error | A provider outage (rate limit, overload, 5xx, connection) or a Malloy compiler crash. Retried twice, then left out of pass rate and pass^k, and counted separately |
@@ -106,6 +106,7 @@ uv run uvicorn app.main:app --reload --reload-dir app --reload-dir static
 | Run | Launch a matrix and compare cells live |
 | History | Reopen and compare past matrices |
 | Harness | See each agent's prompt, tools and checks |
+| Settings | Pick the models on offer and their prices, concurrency and the failure labeler (saved locally in `data/settings.json`). API keys and limits show read-only |
 | MLflow ↗ | Inspect traces (each model and tool call) in MLflow's own UI at `/mlflow` |
 
 ## Where things live
@@ -119,6 +120,7 @@ uv run uvicorn app.main:app --reload --reload-dir app --reload-dir static
 | `app/questions.py`, `app/gold.py`, `gold/` | Prompt sets, reference SQL and frozen reference results |
 | `app/evals.py` | Running and grading a prompt set, and running a matrix (UI and CLI) |
 | `app/labels.py` | Failure labels: rules, and the LLM labeler |
+| `app/settings.py` | Local settings and their defaults (models, prices, concurrency, labeler) |
 | `app/tracking.py`, `app/history.py` | MLflow recording and read API |
 | `app/main.py` | FastAPI server |
 | `static/` | UI (ES modules, no build). Design tokens in `static/css/tokens.css` |
