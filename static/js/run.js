@@ -44,7 +44,12 @@ export function initRun(cfg) {
   updateCount();
   if (!cfg.api_key_set) showStatus('Set ANTHROPIC_API_KEY and restart the server to run.', 'error');
   $('#form').onsubmit = submit;
+  $('#stopBtn').onclick = () => stopping?.abort();
 }
+
+// Stops the live run. Dropping its stream is enough: the server cancels the matrix when the client disconnects, and
+// records it as stopped early. Repeats that finished are kept.
+let stopping = null;
 
 // The latest run started from this page. It keeps streaming while another page shows a past run.
 let live = freshState();
@@ -91,6 +96,8 @@ async function submit(e) {
   live = freshState({repeats: body.repeats});
   showRun();
   $('#runBtn').disabled = true;
+  stopping = new AbortController();
+  $('#stopBtn').classList.remove('hidden');
   $('#empty').classList.add('hidden');
   const t0 = performance.now();
   const elapsed = () => ((performance.now() - t0) / 1000).toFixed(1) + 's';
@@ -106,7 +113,7 @@ async function submit(e) {
   };
   const timer = setInterval(progress, 200);
   try {
-    const res = await postJSON('/api/run', body);
+    const res = await postJSON('/api/run', body, {signal: stopping.signal});
     await readNdjson(res, handleEvent);
     clearInterval(timer);
     live.totalSeconds = (performance.now() - t0) / 1000;
@@ -115,10 +122,20 @@ async function submit(e) {
     showStatus(`Done: ${live.cells.length} setups${runs} in ${elapsed()}.`, 'ok');
   } catch (err) {
     clearInterval(timer);
-    showStatus(err.message, 'error');
+    if (stopping.signal.aborted) {
+      live.stopped = true;
+      for (const cells of Object.values(live.progress)) for (const p of Object.values(cells)) p.active.clear();  // cancelled
+      if (app.state === live) renderProgress();
+      const kept = Object.keys(live.runSeconds).length;
+      showStatus(`Stopped after ${elapsed()}. ${kept ? `${kept} finished repeat${kept > 1 ? 's' : ''} saved` : 'No repeat finished'}; History lists this run as stopped early.`);
+    } else {
+      showStatus(err.message, 'error');
+    }
     if (!live.cells.length && app.state === live) $('#empty').classList.remove('hidden');
   } finally {
     $('#runBtn').disabled = false;
+    $('#stopBtn').classList.add('hidden');
+    stopping = null;
   }
 }
 

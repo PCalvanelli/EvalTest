@@ -163,6 +163,10 @@ function renderCell(id, winner) {
   const live = liveCell(id);
   if (!a) {
     if (err) return `<td class="align-top"><div class="rounded-control border border-danger/30 bg-danger-soft p-3 text-xs">${err}</div></td>`;
+    if (state.stopped) {
+      return `<td class="h-px align-top"><div class="flex h-full min-h-[92px] min-w-[104px] flex-col justify-center rounded-control border border-dashed border-border p-3 text-xs text-ink-muted"
+        title="Stopped before this setup finished a repeat"><span class="font-medium text-ink">Stopped</span>${live ? `<span class="mt-1 tabular-nums">${live.answered}</span>` : ''}</div></td>`;
+    }
     if (!live) {
       return `<td class="h-px align-top"><div class="flex h-full min-h-[92px] min-w-[104px] items-center rounded-control border border-dashed border-border p-3 text-xs text-ink-subtle"
         title="Waiting for an agent slot">Waiting</div></td>`;
@@ -178,7 +182,7 @@ function renderCell(id, winner) {
   const money = a.cost != null ? `<div class="whitespace-nowrap text-xs tabular-nums text-ink-muted" title="Average cost per prompt at list prices">${fmtUSD(a.cost)} / prompt</div>` : '';
   const runs = multi ? `<div class="mt-0.5 text-xs font-semibold tabular-nums" title="Share of prompts that passed in every repeat">${pct(a.pass_k)} always passed</div>` +
     (a.flaky.length ? `<div class="text-xs tabular-nums text-warning" title="Passed in some repeats, not all">${a.flaky.length} flaky</div>` : '') +
-    (a.n < state.repeats ? `<div class="flex items-center gap-1 text-[11px] text-ink-muted">${spinner}${a.n}/${state.repeats} repeats${live ? ` · ${live.answered}` : ''}</div>` : '') : '';
+    (a.n < state.repeats ? `<div class="flex items-center gap-1 text-[11px] text-ink-muted">${state.stopped ? 'Stopped at ' : spinner}${a.n}/${state.repeats} repeats${live && !state.stopped ? ` · ${live.answered}` : ''}</div>` : '') : '';
   const details = [multi && a.n > 1 ? `${pct(a.min)}–${pct(a.max)} across repeats (average shown)` : '',
     `${fmtS(a.seconds)} · ${Math.round(a.tokens).toLocaleString()} tokens · ${+a.tool_calls.toFixed(1)} tool calls`].filter(Boolean).join('\n');
   const first = reportsFor(id)[0];
