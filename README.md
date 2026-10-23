@@ -1,6 +1,6 @@
 # Semantic Layer Bench
 
-**Which layer should an AI agent query to answer business questions: raw SQL, Malloy, or dbt MetricFlow?** This app measures it.
+**Which layer should an AI agent query to answer business questions: raw SQL (with or without a glossary), Malloy, or dbt MetricFlow?** This app measures it.
 
 **Why it matters:** semantic layers promise more accurate answers than raw SQL. This puts numbers on accuracy, consistency and cost.
 
@@ -12,24 +12,27 @@ Each eval is a matrix. Every cell answers the same questions over the same DuckD
 |---|---|
 | Model | Opus / Sonnet / Haiku |
 | Agent | Baseline / harness |
-| Target | Raw SQL / dbt MetricFlow / Malloy |
+| Target | Raw SQL / Raw SQL + glossary / dbt MetricFlow / Malloy |
 
 **The warehouse:** 52 tables (raw → staging → marts) with seed data from 2024-01 to 2025-09.
-It holds **no business metrics**: *net revenue*, *MRR* and *churn* are defined only in the semantic layers.
+It holds **no business metrics**: *net revenue*, *MRR* and *churn* are defined only in the semantic layers (and, in words, the glossary).
 It also has traps: look-alike tables, a deprecated mart, cancelled orders, mixed currencies.
 
 | Target | The agent… | Tools |
 |---|---|---|
 | Raw SQL | Discovers the schema itself | `list_tables`, `describe_table`, `run_sql` |
+| Raw SQL + glossary | Same, plus a short plain-language glossary of business terms (`app/glossary.md`), with no table or column names | Same as raw SQL |
 | dbt MetricFlow | Queries governed metrics from `dbt/`, and can define derived metrics from them | `query_metrics` |
 | Malloy | Writes Malloy against `app/malloy/warehouse.malloy`, which has the same definitions as dbt | `run_malloy` |
+
+**Why the glossary target:** it separates *knowing the definitions* from *having a semantic layer enforce them*. If it closes most of the raw-SQL gap, the definitions mattered more than the query engine.
 
 **The baseline** is the model with only the target's query tools: a way to reach the data, nothing guiding or checking it. **The harness** adds *process* on top, never business knowledge. It's one fixed set. The **Harness** tab compares the two step by step.
 
 | Applies to | What it adds |
 |---|---|
 | Every target | Prompt caching, a tool guardrail, answer review, an output check, an answer checklist, cite-the-run answers, lean tool results |
-| Raw SQL | Deprecated-table lint, column docs for the reviewer |
+| Raw SQL (both) | Deprecated-table lint, column docs for the reviewer |
 | dbt MetricFlow | A compact catalog, inline metric definitions, result steps (top-N, share of total) |
 | Malloy | A flat-output check |
 
