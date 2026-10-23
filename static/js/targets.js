@@ -71,16 +71,19 @@ export async function showTargets() {
 
 // Expressiveness (what can be asked) × determinism (same, correct number every time).
 function quadrant() {
-  const name = (t) => `<span class="block">${withIcon(targetIcon(t), esc(contextName(t)))}</span>`;
-  const box = (html, cls = '') => `<div class="flex min-h-[84px] flex-col justify-center gap-1 rounded-control border border-border p-2 text-xs ${cls}">${html}</div>`;
+  // Names wrap beside their icon (withIcon keeps one line, which a narrow quadrant can't fit).
+  const name = (t) => `<span class="flex min-w-0 items-start gap-1.5">${targetIcon(t)}<span class="min-w-0 leading-4">${esc(contextName(t))}</span></span>`;
+  const cell = (...ids) => `<div class="flex min-h-[88px] min-w-0 flex-col justify-center gap-2 bg-surface p-2.5">${ids.map(name).join('')}</div>`;
   return `
-    <div class="mt-2 grid grid-cols-[auto_minmax(0,1fr)_minmax(0,1fr)] gap-1 text-xs">
-      <div class="row-span-2 flex items-center [writing-mode:vertical-rl] rotate-180 text-ink-muted">Determinism →</div>
-      ${box(name('metricflow'), 'bg-surface-2')}${box(name('malloy'), 'bg-surface-2')}
-      ${box('<span class="text-ink-subtle">—</span>')}${box(name('glossary') + name('raw'))}
-      <div></div><div class="col-span-2 text-center text-ink-muted">Expressiveness →</div>
+    <div class="mt-3 grid grid-cols-[auto_minmax(0,1fr)] gap-x-2 gap-y-1.5 text-xs">
+      <div class="flex items-center justify-center text-ink-muted"><span class="rotate-180 whitespace-nowrap [writing-mode:vertical-rl]">Determinism →</span></div>
+      <div class="grid grid-cols-2 gap-px border-b border-l border-ink-subtle bg-border">
+        ${cell('metricflow')}${cell('malloy')}${cell()}${cell('glossary', 'raw')}
+      </div>
+      <div></div>
+      <div class="text-center text-ink-muted">Expressiveness →</div>
     </div>
-    <p class="hint mt-2">Malloy pays elsewhere: modeling effort, and LLMs have seen little Malloy.</p>`;
+    <p class="hint mt-3">Malloy pays elsewhere: modeling effort, and LLMs have seen little Malloy.</p>`;
 }
 
 async function renderHeatmap() {
