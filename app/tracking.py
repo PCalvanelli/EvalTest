@@ -186,6 +186,7 @@ class MatrixTracker:
             'infra_errors': report.get('infra_errors', 0),
             'over_budget': report.get('over_budget', 0),
             'timeouts': report.get('timeouts', 0),
+            'partial': report.get('partial', 0),
         }
         ts = int(time.time() * 1000)
         self.client.log_batch(run_id, metrics=[Metric(k, float(v), ts, run_no) for k, v in values.items()])

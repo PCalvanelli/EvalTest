@@ -287,6 +287,7 @@ function renderReport(r) {
         ${r.lint_retries ? stat('Lint retries', r.lint_retries) : ''}
         ${r.over_budget ? stat('Over budget', r.over_budget) : ''}
         ${r.timeouts ? stat('Timed out', r.timeouts) : ''}
+        ${r.partial ? stat('Partial', r.partial) : ''}
       </div>
     </details>
     <div class="grid gap-3 xl:grid-cols-2">${r.cases.map(renderCase).join('')}</div>

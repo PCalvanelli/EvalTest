@@ -108,6 +108,7 @@ function pages() {
       {id: 'scoring', title: 'Scoring', body: `
         ${table(['Measure', 'What it means'], [
           ['Pass', 'The final query runs and its rows match the question’s frozen reference rows (order-insensitive, numbers within 0.5%).'],
+          ['Partial', 'A fail, labeled separately: every reference column matches, but the answer adds columns nobody asked for.'],
           ['Budget', 'Every setup gets the same caps per prompt: 15 tool calls, 250k tokens (agent and reviewer together) and 180 s. Over a cap fails as <em>over budget</em> or <em>timed out</em>.'],
           ['Infra error', 'A provider outage (rate limit, overload, 5xx, connection) or a Malloy compiler crash. Retried twice, then left out of pass rate and pass^k, and counted separately.'],
           ['Always passed', 'Share of prompts passed in <em>every</em> repeat (pass^k). Use 3+ repeats: one prompt moves a 22-prompt score by 4.5 points.'],
@@ -163,6 +164,7 @@ function pages() {
           ['Run matrices without the UI (each repeat shuffles the prompt order; add --seed to fix it)', code('uv run python -m app.bench --harness on off --runs 3')],
           ['Freeze reference results after changing prompts or the warehouse', code('uv run python -m app.gold freeze')],
           ['Check the frozen results still match the reference SQL', code('uv run python -m app.gold verify')],
+          ['Run the tests', code('uv run pytest')],
           ['Check every prompt is expressible in both semantic layers', code('uv run python -m app.expressibility')],
           ['Rebuild the warehouse', code('uv run python -m app.db')],
         ])}

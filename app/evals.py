@@ -36,16 +36,21 @@ INFRA_ERRORS = (ModelRateLimitError, ModelQuotaExceededError, ModelUnavailableEr
 INFRA_RETRIES = 2
 
 
-def grade(sql: str | None, error: str | None, question: dict) -> tuple[bool, str | None]:
-    """Pass when the final query runs and returns the question's frozen reference rows; otherwise say why not."""
+def grade(sql: str | None, error: str | None, question: dict) -> tuple[str, str | None]:
+    """'pass' when the final query runs and returns the question's frozen reference rows; 'partial' (a fail) when it
+    returns them plus columns nobody asked for; otherwise 'fail'. With the reason when it isn't a pass."""
     if error is not None:
-        return False, f'Query failed: {error}'
+        return 'fail', f'Query failed: {error}'
     try:
-        if db.rows_match(db.all_rows(sql), gold.rows(question['id']), question.get('match', 'rows')):
-            return True, None
+        outcome = db.compare_rows(db.all_rows(sql), gold.rows(question['id']), question.get('match', 'rows'),
+                                  order_matters=question.get('order_matters', False))
     except Exception as e:
-        return False, f'Could not compare with the reference: {e}'
-    return False, "Rows don't match the reference."
+        return 'fail', f'Could not compare with the reference: {e}'
+    if outcome == 'match':
+        return 'pass', None
+    if outcome == 'partial':
+        return 'partial', 'Partial: every reference column matches, but the answer adds columns nobody asked for.'
+    return 'fail', "Rows don't match the reference."
 
 
 async def run_case(question: dict, model: str, context: Context, harness: bool) -> dict:
@@ -159,8 +164,9 @@ async def run_eval(
             if output['status'] == 'infra_error':
                 passed, reason = False, f'Infrastructure error, left out of the scores: {output["error"]}'
             else:
-                passed, reason = await asyncio.to_thread(grade, output['sql'], output['error'], question)
-                output['status'] = 'pass' if passed else 'fail'
+                outcome, reason = await asyncio.to_thread(grade, output['sql'], output['error'], question)
+                passed = outcome == 'pass'
+                output['status'], output['partial'] = 'pass' if passed else 'fail', outcome == 'partial'
             emit({'type': 'case', 'case': i, 'passed': passed, 'status': output['status'], 'seconds': output['seconds']})
         return {'name': name, 'prompt': question['text'], 'expected_sql': question['expected_sql'], **output,
                 'passed': passed, 'reason': reason, 'cost_usd': case_cost(output, model),
@@ -189,6 +195,7 @@ async def run_eval(
         'infra_errors': len(cases) - len(scored),
         'over_budget': sum(c.get('failure') == 'budget' for c in cases),
         'timeouts': sum(c.get('failure') == 'timeout' for c in cases),
+        'partial': sum(bool(c.get('partial')) for c in cases),
         'total_tokens': total('input_tokens') + total('output_tokens'),
         'input_tokens': total('input_tokens'),
         'cache_read_tokens': total('cache_read_tokens'),

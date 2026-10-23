@@ -53,6 +53,7 @@ Both semantic layers can express every question (`uv run python -m app.expressib
 | Measure | What it means |
 |---|---|
 | Pass | The final query runs and its rows match the question's frozen reference rows (order-insensitive, numbers within 0.5%) |
+| Partial | A fail, labeled separately: every reference column matches, but the answer adds columns nobody asked for |
 | pass^k | Share of questions passed in *every* run. Use Runs ≥ 3: one question moves the score 4.5 points |
 | Cost | The agent's tokens (reviewer included) at list prices (`app/pricing.py`), per question |
 | Budget | Every setup gets the same caps per question: 15 tool calls, 250k tokens (agent and reviewer together) and 180 s. A case over a cap fails as *over budget* or *timed out* |
@@ -62,7 +63,7 @@ Both semantic layers can express every question (`uv run python -m app.expressib
 
 **Frozen references:** `gold/gold.json` holds each question's reference rows, the warehouse build they came from and a checksum. A matrix won't start if it's missing, hand-edited, from another build, or older than a question's SQL. Re-freeze after changing either.
 
-**Benchmark version:** `BENCHMARK_VERSION` in `app/evals.py`. Bump it when what a pass means changes; History marks matrices from other versions as not comparable. Every matrix also logs its git SHA, warehouse build, reference checksum and tool versions.
+**Benchmark version:** `BENCHMARK_VERSION` in `app/evals.py`. Bump it when what a pass means changes (including `REL_TOL` or anything else in the comparator, `app/db.compare_rows`); History marks matrices from other versions as not comparable. Every matrix also logs its git SHA, warehouse build, reference checksum and tool versions.
 
 ## Run it
 
@@ -81,6 +82,7 @@ uv run uvicorn app.main:app --reload --reload-dir app --reload-dir static
 | Rebuild the warehouse | `uv run python -m app.db` (it also rebuilds itself when its SQL changes) |
 | Freeze reference results (after changing questions or the warehouse) | `uv run python -m app.gold freeze` |
 | Check the frozen results still match the reference SQL | `uv run python -m app.gold verify` |
+| Run the tests | `uv run pytest` |
 | Use an MLflow server | `MLFLOW_TRACKING_URI` (default: `data/mlflow.db`) |
 | Turn off tracking | `EVAL_MLFLOW=off` |
 

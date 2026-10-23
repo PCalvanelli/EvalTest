@@ -177,22 +177,44 @@ def results_match(actual_sql: str, expected_sql: str, mode: str = 'rows') -> boo
 
 
 def rows_match(actual: list[Sequence], expected: list[Sequence], mode: str = 'rows', rel_tol: float = REL_TOL) -> bool:
-    """Same rows as the expected ones, ignoring row and column order (Spider-style execution match), with numbers
-    equal within rel_tol. Extra or missing columns still fail. mode='numbers' compares only the numeric columns,
-    for questions whose labels can legitimately vary (TRUE/FALSE vs 'first'/'repeat')."""
+    """compare_rows found the same rows, column for column (no extra columns)."""
+    return compare_rows(actual, expected, mode, rel_tol=rel_tol) == 'match'
+
+
+MAX_COLUMN_MAPPINGS = 5040  # ways to line up the answer's columns with the expected ones; past this, as written only
+
+
+def compare_rows(actual: list[Sequence], expected: list[Sequence], mode: str = 'rows', *,
+                 order_matters: bool = False, rel_tol: float = REL_TOL) -> str:
+    """'match' when the rows are the expected ones (Spider-style execution match: column order ignored, row order too
+    unless order_matters, numbers equal within rel_tol); 'partial' when every expected column is there and matches but
+    the answer has extra columns; otherwise 'mismatch'. mode='numbers' compares only the numeric columns, for questions
+    whose labels can legitimately vary (TRUE/FALSE vs 'first'/'repeat')."""
     if mode == 'numbers':
         actual, expected = _numeric_columns(actual), _numeric_columns(expected)
     if not actual or not expected:
-        return not actual and not expected
-    if len(actual[0]) != len(expected[0]):
-        return False
-    perms = itertools.permutations(range(len(actual[0]))) if len(actual[0]) <= 6 else [tuple(range(len(actual[0])))]
-    return any(_same_rows([tuple(r[i] for i in perm) for r in actual], expected, rel_tol) for perm in perms)
+        return 'match' if not actual and not expected else 'mismatch'
+    n_actual, n_expected = len(actual[0]), len(expected[0])
+    if n_actual < n_expected or len(actual) != len(expected):
+        return 'mismatch'
+    same = _same_rows_in_order if order_matters else _same_rows
+    if math.perm(n_actual, n_expected) <= MAX_COLUMN_MAPPINGS:
+        mappings = itertools.permutations(range(n_actual), n_expected)
+    else:
+        mappings = [tuple(range(n_expected))]
+    for cols in mappings:
+        if same([tuple(r[i] for i in cols) for r in actual], expected, rel_tol):
+            return 'match' if n_actual == n_expected else 'partial'
+    return 'mismatch'
+
+
+def _same_rows_in_order(actual: list[tuple], expected: list[Sequence], rel_tol: float) -> bool:
+    return len(actual) == len(expected) and all(
+        all(_cells_equal(x, y, rel_tol) for x, y in zip(a, e)) for a, e in zip(actual, expected))
 
 
 def _normalize(v: object) -> object:
-    if isinstance(v, float):
-        return round(v, 2)
+    """A cell compared as text (numbers never get here: _cells_equal compares them first)."""
     if isinstance(v, str) and v.endswith(' 00:00:00'):
         return v[:-9]  # a midnight timestamp and a date are the same day (date_trunc returns either)
     if isinstance(v, str) and _YEAR_MONTH.match(v):
