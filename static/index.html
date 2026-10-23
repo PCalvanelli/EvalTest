@@ -84,6 +84,7 @@
       <a class="tab" href="#/run" data-tab="run">Run</a>
       <a class="tab" href="#/history" data-tab="history">History</a>
       <a class="tab" href="#/harness" data-tab="harness">Harness</a>
+      <a class="tab" href="#/docs" data-tab="docs">Docs</a>
     </nav>
     <a id="mlflowNav" href="/mlflow/" target="_blank" rel="noopener" class="btn btn-quiet ml-auto hidden"
        title="Open MLflow">MLflow ↗</a>
@@ -127,10 +128,12 @@
   <main id="results" class="min-w-0 pt-5">
     <nav id="resultTabs" class="mb-4 hidden gap-5 border-b border-border" role="tablist" aria-label="Results">
       <button type="button" class="tab -mb-px pb-2" role="tab" data-pane="overview">Pass rate</button>
-      <button type="button" class="tab -mb-px pb-2" role="tab" data-pane="questions">By question</button>
+      <button type="button" class="tab -mb-px pb-2" role="tab" data-pane="ranking">Ranking</button>
+      <button type="button" class="tab -mb-px pb-2" role="tab" data-pane="questions">By prompt</button>
       <button type="button" class="tab -mb-px pb-2" role="tab" data-pane="detail">Answers</button>
     </nav>
     <div data-pane="overview" role="tabpanel">
+    <div id="winner" class="mb-3 hidden" aria-live="polite"></div>
     <section id="matrixWrap" class="panel hidden p-4">
       <div class="mb-1 flex flex-wrap items-baseline justify-between gap-3">
         <p class="hint">Pass rate per setup. Open one to see its answers.</p>
@@ -145,6 +148,16 @@
         <p class="hint mt-1.5">Time includes waiting for other setups. Cost uses list prices (<code>app/pricing.py</code>).</p>
       </details>
       <div class="overflow-x-auto"><table id="matrix" class="w-full border-separate border-spacing-1.5 text-sm"></table></div>
+    </section>
+    </div>
+    <div data-pane="ranking" role="tabpanel" hidden>
+    <section class="panel p-4">
+      <p class="hint">Every setup ranked by one score out of 100, weighted across accuracy, cost and speed. Cost and speed
+        are scored against the best setup in this run: the cheapest scores 100 on cost, and one costing twice as much
+        scores 50. The small grey numbers are those scores.</p>
+      <div id="weights" class="mt-4 flex flex-wrap items-end gap-x-6 gap-y-3"></div>
+      <div id="rankingNote"></div>
+      <div class="mt-4 overflow-x-auto"><table id="ranking" class="data-table w-full text-sm"></table></div>
     </section>
     </div>
     <div data-pane="questions" role="tabpanel" hidden>
@@ -187,6 +200,11 @@
   </div>
   <div id="harnessControls" class="mb-4 flex flex-wrap items-center gap-x-6 gap-y-2"></div>
   <div id="harnessBody"></div>
+</div>
+
+<!-- ─────────────────────────── Docs ─────────────────────────── -->
+<div id="view-docs" class="view mx-auto max-w-[1500px] px-4 lg:px-6" hidden>
+  <div id="docsBody"></div>
 </div>
 
 <script type="module" src="/static/js/app.js"></script>
